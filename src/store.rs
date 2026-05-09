@@ -19,20 +19,19 @@ impl TaskStore {
     }
 
     pub fn task_path(&self, task_id: &str) -> PathBuf {
-        let year = task_id
-            .split('-')
-            .nth(1)
-            .and_then(|date| date.get(0..4))
-            .unwrap_or("unknown");
+        let year = task_year(task_id);
+        let task_component = safe_task_component(task_id);
 
         self.root
             .join("tasks")
             .join(year)
-            .join(format!("{task_id}.yaml"))
+            .join(format!("{task_component}.yaml"))
     }
 
     pub fn session_dir(&self, task_id: &str) -> PathBuf {
-        self.root.join("sessions").join(task_id)
+        self.root
+            .join("sessions")
+            .join(safe_task_component(task_id))
     }
 
     pub fn events_path(&self, task_id: &str) -> PathBuf {
@@ -85,17 +84,48 @@ impl TaskStore {
         let reader = BufReader::new(file);
         let mut events = Vec::new();
 
-        for line in reader.lines() {
-            let line = line.with_context(|| format!("read line from {}", path.display()))?;
+        for (index, line) in reader.lines().enumerate() {
+            let line_number = index + 1;
+            let line =
+                line.with_context(|| format!("read line {line_number} from {}", path.display()))?;
             if line.trim().is_empty() {
                 continue;
             }
-            events.push(
-                serde_json::from_str(&line)
-                    .with_context(|| format!("parse event from {}", path.display()))?,
-            );
+            events.push(serde_json::from_str(&line).with_context(|| {
+                format!("parse event line {line_number} from {}", path.display())
+            })?);
         }
 
         Ok(events)
     }
+}
+
+fn task_year(task_id: &str) -> &str {
+    if !task_id.chars().all(is_safe_task_char) {
+        return "unknown";
+    }
+
+    task_id
+        .split('-')
+        .nth(1)
+        .and_then(|date| date.get(0..4))
+        .filter(|year| year.len() == 4 && year.chars().all(|ch| ch.is_ascii_digit()))
+        .unwrap_or("unknown")
+}
+
+fn safe_task_component(task_id: &str) -> String {
+    let sanitized: String = task_id
+        .chars()
+        .map(|ch| if is_safe_task_char(ch) { ch } else { '_' })
+        .collect();
+
+    if sanitized.is_empty() {
+        "unknown-task".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn is_safe_task_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '-' || ch == '_'
 }

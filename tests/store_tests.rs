@@ -2,11 +2,35 @@ use helm_agent::domain::{TaskEvent, TaskRecord};
 use helm_agent::paths::{helm_agent_home, HELM_AGENT_HOME_ENV};
 use helm_agent::store::TaskStore;
 use std::env;
+use std::ffi::OsString;
+use std::fs;
 use std::sync::Mutex;
 use tempfile::tempdir;
 use time::OffsetDateTime;
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+struct EnvRestore {
+    key: &'static str,
+    original: Option<OsString>,
+}
+
+impl EnvRestore {
+    fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+        let original = env::var_os(key);
+        env::set_var(key, value);
+        Self { key, original }
+    }
+}
+
+impl Drop for EnvRestore {
+    fn drop(&mut self) {
+        match &self.original {
+            Some(value) => env::set_var(self.key, value),
+            None => env::remove_var(self.key),
+        }
+    }
+}
 
 #[test]
 fn save_and_load_task_record() {
@@ -70,18 +94,55 @@ fn session_paths_are_rooted_by_task_id() {
 }
 
 #[test]
+fn unsafe_task_ids_are_sanitized_for_paths() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+
+    assert_eq!(
+        store.task_path("../PM-20260509-001/escape"),
+        temp.path()
+            .join("tasks")
+            .join("unknown")
+            .join("___PM-20260509-001_escape.yaml")
+    );
+    assert_eq!(
+        store.session_dir("/tmp/PM-20260509-001"),
+        temp.path().join("sessions").join("_tmp_PM-20260509-001")
+    );
+}
+
+#[test]
+fn event_parse_errors_include_line_number() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let event = TaskEvent::progress(
+        "PM-20260509-001".to_string(),
+        "Found redirect handler".to_string(),
+        OffsetDateTime::UNIX_EPOCH,
+    );
+
+    store.append_event(&event).unwrap();
+    let valid = serde_json::to_string(&event).unwrap();
+    fs::write(
+        store.events_path("PM-20260509-001"),
+        format!("{valid}\nnot-json\n"),
+    )
+    .unwrap();
+
+    let error = store
+        .read_events("PM-20260509-001")
+        .expect_err("invalid jsonl should fail");
+    let error_text = format!("{error:#}");
+
+    assert!(error_text.contains("line 2"), "{error_text}");
+}
+
+#[test]
 fn helm_agent_home_uses_env_override() {
     let _guard = ENV_LOCK.lock().unwrap();
-    let original = env::var_os(HELM_AGENT_HOME_ENV);
     let temp = tempdir().unwrap();
-
-    env::set_var(HELM_AGENT_HOME_ENV, temp.path());
+    let _restore = EnvRestore::set_path(HELM_AGENT_HOME_ENV, temp.path());
     let resolved = helm_agent_home().unwrap();
-
-    match original {
-        Some(value) => env::set_var(HELM_AGENT_HOME_ENV, value),
-        None => env::remove_var(HELM_AGENT_HOME_ENV),
-    }
 
     assert_eq!(resolved, temp.path());
 }
