@@ -7,7 +7,8 @@ HelmAgent should be the source of truth for delegated coding work. Claude Code, 
 - Create a HelmAgent task before delegating work.
 - Run `helm-agent task status <id>` before reporting task state.
 - Run `helm-agent task dispatch --dry-run --runtime <runtime> <id>` before starting a child agent.
-- Do not claim code-changing work is complete until the task is ready for review or the review is accepted.
+- Do not claim code-changing work is complete until you have recorded a review signal and presented the artifacts to the human.
+- Only the human or an explicitly authorized main agent should run `helm-agent task review --accept` or `helm-agent task review --request-changes`.
 - Show attach and resume commands whenever work is delegated or recovered.
 - Ask before using Codex unless the user has already approved it for the task or workspace.
 - Prefer free agents for small, low-risk tasks.
@@ -20,13 +21,15 @@ Create a task:
 helm-agent task create --id PM-20260509-101 --title "Add retry tests" --project .
 ```
 
-Record progress, a blocker, or readiness for review:
+Record progress, a blocker signal, or a ready_for_review signal:
 
 ```bash
 helm-agent task event PM-20260509-101 --type progress --message "Created the failing regression test"
 helm-agent task event PM-20260509-101 --type blocked --message "Waiting for API contract confirmation"
 helm-agent task event PM-20260509-101 --type ready_for_review --message "Implementation and tests are ready"
 ```
+
+`task event` records signals and notes only. In V1, `--type blocked` and `--type ready_for_review` do not change the task status to blocked or ready for review.
 
 Preview child-agent dispatch before starting anything:
 
@@ -48,7 +51,7 @@ Show recovery commands:
 helm-agent task resume PM-20260509-101
 ```
 
-Review delegated work:
+Human or authorized reviewer commands:
 
 ```bash
 helm-agent task review PM-20260509-101 --accept
@@ -72,9 +75,9 @@ Reason: Small isolated test and implementation task
 Status: queued
 Attach: tmux attach -t helm-agent-PM-20260509-101-claude
 Resume: claude --resume <session-id>
-Review: helm-agent task review PM-20260509-101 --accept
+Review: Human review required; suggested command: helm-agent task review PM-20260509-101 --accept
 ```
 
 ## Reporting Guidance
 
-Main agents should report HelmAgent state, not memory or assumptions. If `helm-agent task status <id>` says the task is running, report it as running. If the child agent says it is done but the task is not marked ready for review or accepted, report that review is still pending.
+Main agents should report HelmAgent state, not memory or assumptions. If `helm-agent task status <id>` says the task is running, report it as running. If the child agent says it is done but no review signal has been recorded or artifacts have not been presented to the human, report that review handoff is still pending.
