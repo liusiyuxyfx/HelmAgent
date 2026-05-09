@@ -39,12 +39,24 @@ impl Launcher {
         LaunchPreview {
             start_command: format!(
                 "tmux new-session -d -s {tmux_session} -c {cwd} {command}",
-                cwd = dispatch.cwd.display(),
-                command = adapter.command
+                cwd = shell_quote(&dispatch.cwd.display().to_string()),
+                command = shell_quote(adapter.command)
             ),
             attach_command: format!("tmux attach -t {tmux_session}"),
             resume_command,
             tmux_session,
         }
     }
+}
+
+fn shell_quote(value: &str) -> String {
+    if value.chars().all(is_shell_safe_char) {
+        return value.to_string();
+    }
+
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn is_shell_safe_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':' | '+' | '=' | ',')
 }

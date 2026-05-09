@@ -101,3 +101,33 @@ fn opencode_dry_run_preview_has_no_native_resume_command() {
     );
     assert_eq!(launch.resume_command, None);
 }
+
+#[test]
+fn dry_run_preview_shell_quotes_cwd_with_spaces() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-010".to_string(),
+        runtime: AgentRuntime::Claude,
+        cwd: PathBuf::from("/repo/my project"),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
+
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s helm-agent-PM-20260509-010-claude -c '/repo/my project' claude"
+    );
+}
+
+#[test]
+fn dry_run_preview_shell_quotes_single_quote_in_cwd() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-011".to_string(),
+        runtime: AgentRuntime::Codex,
+        cwd: PathBuf::from("/repo/owner's project"),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
+
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s helm-agent-PM-20260509-011-codex -c '/repo/owner'\\''s project' codex"
+    );
+}
