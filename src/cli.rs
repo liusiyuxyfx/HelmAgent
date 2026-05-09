@@ -196,7 +196,11 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             store.save_task(&task)?;
             store.append_event(&TaskEvent::new(
                 args.id.clone(),
-                "dispatch_planned",
+                if args.dry_run {
+                    "dispatch_planned"
+                } else {
+                    "dispatch_started"
+                },
                 launch.start_command.clone(),
                 now,
             ))?;

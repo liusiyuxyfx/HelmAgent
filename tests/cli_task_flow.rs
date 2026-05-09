@@ -362,6 +362,13 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         task.recovery.attach_command.as_deref(),
         Some("tmux attach -t helm-agent-PM-20260509-006-codex")
     );
+    let events = store.read_events("PM-20260509-006").unwrap();
+    let event = events.last().unwrap();
+    assert_eq!(event.event_type, "dispatch_started");
+    assert_eq!(
+        event.message,
+        "tmux new-session -d -s helm-agent-PM-20260509-006-codex -c '/repo/my project' codex"
+    );
 
     helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-006"])

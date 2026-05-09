@@ -52,10 +52,11 @@ impl Launcher {
         LaunchPreview {
             start_command: format!(
                 "tmux new-session -d -s {tmux_session} -c {cwd} {command}",
+                tmux_session = shell_quote(&tmux_session),
                 cwd = shell_quote(&dispatch.cwd.display().to_string()),
                 command = shell_quote(adapter.command)
             ),
-            attach_command: format!("tmux attach -t {tmux_session}"),
+            attach_command: format!("tmux attach -t {}", shell_quote(&tmux_session)),
             resume_command,
             tmux_session,
         }
@@ -64,7 +65,7 @@ impl Launcher {
     pub fn launch(&self, dispatch: &DispatchPlan) -> Result<LaunchPreview> {
         let preview = self.dry_run(dispatch);
         let adapter = RuntimeAdapter::for_runtime(dispatch.runtime);
-        let status = Command::new(&self.tmux_bin)
+        let output = Command::new(&self.tmux_bin)
             .arg("new-session")
             .arg("-d")
             .arg("-s")
@@ -72,7 +73,7 @@ impl Launcher {
             .arg("-c")
             .arg(&dispatch.cwd)
             .arg(adapter.command)
-            .status()
+            .output()
             .with_context(|| {
                 format!(
                     "failed to start tmux session {} using {}",
@@ -81,15 +82,27 @@ impl Launcher {
                 )
             })?;
 
-        if !status.success() {
+        if !output.status.success() {
             bail!(
-                "failed to start tmux session {}: tmux exited with status {}",
+                "failed to start tmux session {}: tmux exited with status {}{}",
                 preview.tmux_session,
-                status
+                output.status,
+                tmux_output_context(&output.stdout, &output.stderr)
             );
         }
 
         Ok(preview)
+    }
+}
+
+fn tmux_output_context(stdout: &[u8], stderr: &[u8]) -> String {
+    let stdout = String::from_utf8_lossy(stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(stderr).trim().to_string();
+    match (stdout.is_empty(), stderr.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => format!("; stderr: {stderr}"),
+        (false, true) => format!("; stdout: {stdout}"),
+        (false, false) => format!("; stderr: {stderr}; stdout: {stdout}"),
     }
 }
 

@@ -21,6 +21,17 @@ fn fake_tmux_script(path: &Path, record_path: &Path) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn failing_tmux_script(path: &Path) {
+    fs::write(
+        path,
+        "#!/bin/sh\nprintf '%s\\n' 'tmux failed: duplicate session' >&2\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 #[test]
 fn adapter_metadata_matches_runtime_capabilities() {
     let claude = RuntimeAdapter::for_runtime(AgentRuntime::Claude);
@@ -151,6 +162,26 @@ fn dry_run_preview_shell_quotes_single_quote_in_cwd() {
 }
 
 #[test]
+fn dry_run_preview_shell_quotes_unsafe_session_tokens() {
+    let dispatch = DispatchPlan {
+        task_id: "PM 20260509'013".to_string(),
+        runtime: AgentRuntime::Codex,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
+
+    assert_eq!(launch.tmux_session, "helm-agent-PM 20260509'013-codex");
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s 'helm-agent-PM 20260509'\\''013-codex' -c /repo/project codex"
+    );
+    assert_eq!(
+        launch.attach_command,
+        "tmux attach -t 'helm-agent-PM 20260509'\\''013-codex'"
+    );
+}
+
+#[test]
 fn launch_executes_tmux_with_expected_arguments() {
     let temp = tempdir().unwrap();
     let tmux_bin = temp.path().join("fake-tmux");
@@ -173,4 +204,24 @@ fn launch_executes_tmux_with_expected_arguments() {
         fs::read_to_string(record_path).unwrap(),
         "new-session\n-d\n-s\nhelm-agent-PM-20260509-012-codex\n-c\n/repo/my project\ncodex\n"
     );
+}
+
+#[test]
+fn launch_error_includes_tmux_output_and_session_name() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("failing-tmux");
+    failing_tmux_script(&tmux_bin);
+
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-014".to_string(),
+        runtime: AgentRuntime::Claude,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let error = Launcher::with_tmux_bin(tmux_bin)
+        .launch(&dispatch)
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("helm-agent-PM-20260509-014-claude"));
+    assert!(error.contains("tmux failed: duplicate session"));
 }
