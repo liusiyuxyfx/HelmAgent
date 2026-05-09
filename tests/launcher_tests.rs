@@ -1,7 +1,25 @@
 use helm_agent::adapter::RuntimeAdapter;
 use helm_agent::domain::AgentRuntime;
 use helm_agent::launcher::{DispatchPlan, Launcher};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use std::path::PathBuf;
+use tempfile::tempdir;
+
+fn fake_tmux_script(path: &Path, record_path: &Path) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone > '{record_path}'\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
 
 #[test]
 fn adapter_metadata_matches_runtime_capabilities() {
@@ -129,5 +147,30 @@ fn dry_run_preview_shell_quotes_single_quote_in_cwd() {
     assert_eq!(
         launch.start_command,
         "tmux new-session -d -s helm-agent-PM-20260509-011-codex -c '/repo/owner'\\''s project' codex"
+    );
+}
+
+#[test]
+fn launch_executes_tmux_with_expected_arguments() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-012".to_string(),
+        runtime: AgentRuntime::Codex,
+        cwd: PathBuf::from("/repo/my project"),
+    };
+    let launch = Launcher::with_tmux_bin(tmux_bin).launch(&dispatch).unwrap();
+
+    assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-012-codex");
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s helm-agent-PM-20260509-012-codex -c '/repo/my project' codex"
+    );
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "new-session\n-d\n-s\nhelm-agent-PM-20260509-012-codex\n-c\n/repo/my project\ncodex\n"
     );
 }

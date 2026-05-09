@@ -1,6 +1,9 @@
 use crate::adapter::RuntimeAdapter;
 use crate::domain::AgentRuntime;
+use anyhow::{bail, Context, Result};
+use std::env;
 use std::path::PathBuf;
+use std::process::Command;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DispatchPlan {
@@ -17,12 +20,22 @@ pub struct LaunchPreview {
     pub resume_command: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Launcher;
+#[derive(Debug, Clone)]
+pub struct Launcher {
+    tmux_bin: PathBuf,
+}
 
 impl Launcher {
     pub fn new() -> Self {
-        Self
+        Self {
+            tmux_bin: env::var_os("HELM_AGENT_TMUX_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("tmux")),
+        }
+    }
+
+    pub fn with_tmux_bin(tmux_bin: PathBuf) -> Self {
+        Self { tmux_bin }
     }
 
     pub fn dry_run(&self, dispatch: &DispatchPlan) -> LaunchPreview {
@@ -46,6 +59,43 @@ impl Launcher {
             resume_command,
             tmux_session,
         }
+    }
+
+    pub fn launch(&self, dispatch: &DispatchPlan) -> Result<LaunchPreview> {
+        let preview = self.dry_run(dispatch);
+        let adapter = RuntimeAdapter::for_runtime(dispatch.runtime);
+        let status = Command::new(&self.tmux_bin)
+            .arg("new-session")
+            .arg("-d")
+            .arg("-s")
+            .arg(&preview.tmux_session)
+            .arg("-c")
+            .arg(&dispatch.cwd)
+            .arg(adapter.command)
+            .status()
+            .with_context(|| {
+                format!(
+                    "failed to start tmux session {} using {}",
+                    preview.tmux_session,
+                    self.tmux_bin.display()
+                )
+            })?;
+
+        if !status.success() {
+            bail!(
+                "failed to start tmux session {}: tmux exited with status {}",
+                preview.tmux_session,
+                status
+            );
+        }
+
+        Ok(preview)
+    }
+}
+
+impl Default for Launcher {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

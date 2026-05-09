@@ -3,12 +3,29 @@ use helm_agent::domain::{AgentRuntime, TaskStatus};
 use helm_agent::store::TaskStore;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::{contains, is_empty};
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::Path;
 use tempfile::tempdir;
 
 fn helm_agent_with_home(home: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("helm-agent").unwrap();
     cmd.env("HELM_AGENT_HOME", home);
     cmd
+}
+
+fn fake_tmux_script(path: &Path, record_path: &Path) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone > '{record_path}'\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
 }
 
 #[test]
@@ -283,6 +300,74 @@ fn dry_run_dispatch_omits_unavailable_native_resume_command() {
             "Attach: tmux attach -t helm-agent-PM-20260509-005-opencode",
         ))
         .stdout(contains("Resume: No native resume command recorded"));
+}
+
+#[test]
+fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-006",
+            "--title",
+            "Dispatch task to real tmux",
+            "--project",
+            "/repo/my project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-006",
+            "--runtime",
+            "codex",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260509-006"))
+        .stdout(contains(
+            "Start: tmux new-session -d -s helm-agent-PM-20260509-006-codex -c '/repo/my project' codex",
+        ))
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260509-006-codex",
+        ))
+        .stdout(contains("Resume: codex resume <session-id> --all"));
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "new-session\n-d\n-s\nhelm-agent-PM-20260509-006-codex\n-c\n/repo/my project\ncodex\n"
+    );
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260509-006").unwrap();
+    assert_eq!(task.status, TaskStatus::Running);
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Codex));
+    assert_eq!(
+        task.assignment.tmux_session.as_deref(),
+        Some("helm-agent-PM-20260509-006-codex")
+    );
+    assert_eq!(task.progress.last_event, "Dispatch started");
+    assert_eq!(
+        task.recovery.attach_command.as_deref(),
+        Some("tmux attach -t helm-agent-PM-20260509-006-codex")
+    );
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260509-006"])
+        .assert()
+        .success()
+        .stdout(contains("[running]"));
 }
 
 #[test]

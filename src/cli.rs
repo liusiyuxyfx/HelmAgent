@@ -169,9 +169,18 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 runtime,
                 cwd: task.project.path.clone(),
             };
-            let launch = Launcher::new().dry_run(&dispatch);
+            let launcher = Launcher::new();
+            let launch = if args.dry_run {
+                launcher.dry_run(&dispatch)
+            } else {
+                launcher.launch(&dispatch)?
+            };
 
-            task.status = TaskStatus::Queued;
+            task.status = if args.dry_run {
+                TaskStatus::Queued
+            } else {
+                TaskStatus::Running
+            };
             task.assignment.runtime = Some(runtime);
             task.assignment.tmux_session = Some(launch.tmux_session.clone());
             task.recovery.attach_command = Some(launch.attach_command.clone());
@@ -179,7 +188,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             task.progress.last_event = if args.dry_run {
                 "Dry-run dispatch recorded".to_string()
             } else {
-                "Dispatch requested".to_string()
+                "Dispatch started".to_string()
             };
             task.progress.next_action = "Start or inspect child agent session".to_string();
             task.touch(now);
@@ -195,7 +204,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             if args.dry_run {
                 println!("Dry-run dispatch {}", args.id);
             } else {
-                println!("Dispatch requested {}", args.id);
+                println!("Started {}", args.id);
             }
             println!("Start: {}", launch.start_command);
             println!("Attach: {}", launch.attach_command);
