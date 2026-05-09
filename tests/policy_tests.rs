@@ -23,6 +23,22 @@ fn codex_requires_confirmation() {
         risk: RiskLevel::Low,
         runtime: AgentRuntime::Codex,
         writes_files: false,
+        paid_runtime: false,
+        cross_project: false,
+        network_sensitive: false,
+    };
+
+    let decision = input.evaluate();
+
+    assert_eq!(decision, DispatchDecision::ConfirmRequired);
+}
+
+#[test]
+fn paid_runtime_requires_confirmation() {
+    let input = PolicyInput {
+        risk: RiskLevel::Low,
+        runtime: AgentRuntime::Claude,
+        writes_files: false,
         paid_runtime: true,
         cross_project: false,
         network_sensitive: false,
