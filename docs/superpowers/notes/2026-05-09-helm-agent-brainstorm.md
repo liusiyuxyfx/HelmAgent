@@ -1,4 +1,4 @@
-# Agent Ops Center Brainstorm Notes
+# HelmAgent Brainstorm Notes
 
 Date: 2026-05-09
 Status: discussion notes, not an approved spec
@@ -67,7 +67,7 @@ Possible later isolation levels:
 
 ## Recommended Architecture Direction
 
-Design as a local Agent Ops Center, but build V1 at the size of a tmux-based dispatcher.
+Design as a local HelmAgent, but build V1 at the size of a tmux-based dispatcher.
 
 Core components:
 

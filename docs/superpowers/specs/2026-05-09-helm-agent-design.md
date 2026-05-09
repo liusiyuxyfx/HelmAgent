@@ -1,4 +1,4 @@
-# Agent Ops Center Design
+# HelmAgent Design
 
 Date: 2026-05-09
 Status: design approved in conversation, pending written spec review
@@ -18,7 +18,7 @@ Priority order:
 
 ## 2. Product Shape
 
-The tool is named Agent Ops Center for this design. It is a local agent coordination system.
+The tool is named HelmAgent for this design. It is a local agent coordination system.
 
 The primary interaction is still a main agent running in Claude Code or Codex. The user talks to this main agent directly. The main agent creates tasks, triages them, chooses a child agent, starts the child agent, tracks progress, and asks the user for review when needed.
 
@@ -32,14 +32,14 @@ Make agent delegation trackable, resumable, and reviewable without adding a heav
 
 ## 3. Architecture
 
-Agent Ops Center has a local CLI-first core and thin integrations for Claude Code, Codex, and later other agents. A background service can be added later for a richer board, but it is not required for V1.
+HelmAgent has a local CLI-first core and thin integrations for Claude Code, Codex, and later other agents. A background service can be added later for a richer board, but it is not required for V1.
 
 ```text
 User
  |
 Main Agent: Claude Code or Codex
  |
-Agent Ops Center local CLI core
+HelmAgent local CLI core
  |
 +-- Task Store
 +-- Policy Engine
@@ -55,7 +55,7 @@ Child agent tmux sessions
 
 ### Main Agent
 
-The main agent is the conversational coordinator. It runs inside Claude Code or Codex and uses Agent Ops Center through a shared CLI.
+The main agent is the conversational coordinator. It runs inside Claude Code or Codex and uses HelmAgent through a shared CLI.
 
 Responsibilities:
 
@@ -68,7 +68,7 @@ Responsibilities:
 - Summarize progress and results.
 - Maintain review and recovery context.
 
-### Agent Ops Center Core
+### HelmAgent Core
 
 The core is the source of truth. It should avoid being tied to one agent runtime.
 
@@ -97,7 +97,7 @@ V1 should build a reliable local dispatcher rather than a complete automation pl
 
 Required:
 
-- `aoc` CLI.
+- `helm-agent` CLI.
 - Centralized task store.
 - Default semi-automatic policy.
 - Task state machine.
@@ -131,7 +131,7 @@ Use a centralized workspace as the source of truth.
 Default location:
 
 ```text
-~/.agent-ops-center/
+~/.helm-agent/
   config.yaml
   policies/
     default.yaml
@@ -231,11 +231,11 @@ project:
 assignment:
   runtime: claude
   workflow: cc-default
-  tmux_session: aoc-PM-20260509-001-claude
+  tmux_session: helmagent-PM-20260509-001-claude
   native_session_id: 58fa3206-cb0-47ad-b306-912f7d122a02
   acp_session_id: null
 recovery:
-  attach_command: tmux attach -t aoc-PM-20260509-001-claude
+  attach_command: tmux attach -t helmagent-PM-20260509-001-claude
   resume_command: claude --resume 58fa3206-cb0-47ad-b306-912f7d122a02
 progress:
   summary: Investigating auth redirect handler.
@@ -346,15 +346,15 @@ The launcher flow:
 Session naming:
 
 ```text
-aoc-<task-id>-<runtime>
+helmagent-<task-id>-<runtime>
 ```
 
 Examples:
 
 ```text
-aoc-PM-20260509-001-claude
-aoc-PM-20260509-002-opencode
-aoc-PM-20260509-003-codex
+helmagent-PM-20260509-001-claude
+helmagent-PM-20260509-002-opencode
+helmagent-PM-20260509-003-codex
 ```
 
 Recovery paths:
@@ -404,7 +404,7 @@ Instead, V1 should isolate by behavior:
 - Launch child agents through explicit commands.
 - Record runtime, workflow label, cwd, tmux session, and session IDs.
 - Avoid writing project-local metadata unless requested.
-- Keep Agent Ops Center state under `~/.agent-ops-center`.
+- Keep HelmAgent state under `~/.helm-agent`.
 
 Stronger isolation is a later extension:
 
@@ -422,16 +422,16 @@ The shared CLI is the stable integration point.
 Suggested commands:
 
 ```bash
-aoc task create --title "Fix login redirect bug" --project /repo --description -
-aoc task triage PM-20260509-001
-aoc task dispatch PM-20260509-001 --auto
-aoc task status
-aoc task status PM-20260509-001
-aoc task resume PM-20260509-001
-aoc task review PM-20260509-001 --accept
-aoc task review PM-20260509-001 --request-changes "Add a failing regression test"
-aoc task event PM-20260509-001 --type progress --message "Found redirect handler"
-aoc board
+helm-agent task create --title "Fix login redirect bug" --project /repo --description -
+helm-agent task triage PM-20260509-001
+helm-agent task dispatch PM-20260509-001 --auto
+helm-agent task status
+helm-agent task status PM-20260509-001
+helm-agent task resume PM-20260509-001
+helm-agent task review PM-20260509-001 --accept
+helm-agent task review PM-20260509-001 --request-changes "Add a failing regression test"
+helm-agent task event PM-20260509-001 --type progress --message "Found redirect handler"
+helm-agent board
 ```
 
 Integration principle:
@@ -444,19 +444,19 @@ All agents share one task store.
 
 Claude Code integration:
 
-- Provide a skill or slash-command style instruction for using `aoc`.
+- Provide a skill or slash-command style instruction for using `helm-agent`.
 - Do not install or modify global hooks by default.
 - Let the user opt in to deeper integration later.
 
 Codex integration:
 
-- Provide equivalent skill/rule/plugin guidance for invoking `aoc`.
+- Provide equivalent skill/rule/plugin guidance for invoking `helm-agent`.
 - Keep compatibility with existing Codex Superpowers or other workflows.
 
 Child agent integration:
 
 - Child agents receive a structured task prompt.
-- If they can call `aoc task event`, they should report progress directly.
+- If they can call `helm-agent task event`, they should report progress directly.
 - If they cannot, launcher transcript capture and main-agent summarization are acceptable.
 
 ## 11. Review Experience
@@ -478,7 +478,7 @@ recommended_action:
   - ask_agent_followup
   - take_over
 commands:
-  attach: tmux attach -t aoc-PM-20260509-001-claude
+  attach: tmux attach -t helmagent-PM-20260509-001-claude
   resume: claude --resume <session-id>
 ```
 
@@ -523,9 +523,9 @@ Web Board can be added later by reading the same task store.
 
 ## 13. Technology Choices
 
-V1 should use Rust for the core Agent Ops Center CLI.
+V1 should use Rust for the core HelmAgent CLI.
 
-Rust is a good fit for the core because Agent Ops Center needs a reliable local binary that manages files, subprocesses, tmux sessions, logs, and state transitions. The main benefit is not raw performance. The main benefit is a single distributable binary, strong typing for task and policy state, and dependable local process orchestration.
+Rust is a good fit for the core because HelmAgent needs a reliable local binary that manages files, subprocesses, tmux sessions, logs, and state transitions. The main benefit is not raw performance. The main benefit is a single distributable binary, strong typing for task and policy state, and dependable local process orchestration.
 
 Recommended V1 stack:
 
@@ -549,7 +549,7 @@ Board:
   Later Web Board: Rust axum backend + React/Vite frontend, or a frontend that reads an API exposed by the Rust core
 
 Agent integration:
-  Claude Code/Codex/OpenCode integration should start as Markdown instructions, skills, or thin wrappers that call the shared aoc CLI.
+  Claude Code/Codex/OpenCode integration should start as Markdown instructions, skills, or thin wrappers that call the shared HelmAgent CLI.
   Do not put durable state inside agent-specific plugins.
 ```
 
@@ -606,8 +606,8 @@ V1 is successful when:
 3. Low-risk tasks can be automatically dispatched to a free agent.
 4. Codex dispatch asks for confirmation.
 5. Child agents run in tmux sessions.
-6. `aoc task status` shows state, progress, next action, and review need.
-7. `aoc task resume <id>` shows attach and native resume commands when available.
+6. `helm-agent task status` shows state, progress, next action, and review need.
+7. `helm-agent task resume <id>` shows attach and native resume commands when available.
 8. Running child agents can be recovered with `tmux attach`.
 9. Exited Claude Code and Codex sessions can be recovered through recorded native resume commands when adapter support is available.
 10. Code-changing tasks enter `ready_for_review` before `done`.
@@ -618,7 +618,7 @@ V1 is successful when:
 
 Recommended order:
 
-1. Create `aoc` CLI and file-backed task store.
+1. Create `helm-agent` CLI and file-backed task store.
 2. Implement task state machine.
 3. Implement default policy.
 4. Implement tmux launcher.

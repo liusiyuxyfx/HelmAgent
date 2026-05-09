@@ -1,8 +1,8 @@
-# Agent Ops Center Implementation Plan
+# HelmAgent Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the V1 `aoc` Rust CLI core for local task tracking, policy decisions, tmux-based dispatch records, and human recovery commands.
+**Goal:** Build the V1 `helm-agent` Rust CLI core for local task tracking, policy decisions, tmux-based dispatch records, and human recovery commands.
 
 **Architecture:** The first implementation is CLI-first and file-backed. Rust owns the task domain model, YAML task records, JSONL events, policy decisions, command output, and launcher command construction; agent-specific integrations remain thin wrappers or documentation that call the shared CLI.
 
@@ -14,13 +14,13 @@
 
 This plan implements the first working core:
 
-- `aoc task create`
-- `aoc task status`
-- `aoc task resume`
-- `aoc task review --accept`
-- `aoc task review --request-changes <message>`
-- `aoc task event`
-- `aoc task dispatch --dry-run`
+- `helm-agent task create`
+- `helm-agent task status`
+- `helm-agent task resume`
+- `helm-agent task review --accept`
+- `helm-agent task review --request-changes <message>`
+- `helm-agent task event`
+- `helm-agent task dispatch --dry-run`
 - File-backed task records and event logs
 - Default semi-automatic policy
 - tmux command construction and adapter capability records
@@ -36,13 +36,13 @@ This plan does not implement a Web Board, container sandboxing, external issue i
 - `src/adapter.rs`: runtime adapter command and resume capability metadata.
 - `src/cli.rs`: `clap` command definitions and top-level command handling.
 - `src/domain.rs`: task IDs, statuses, risk, runtime, records, events, and review decisions.
-- `src/paths.rs`: Agent Ops Center home directory resolution and test override.
+- `src/paths.rs`: HelmAgent home directory resolution and test override.
 - `src/store.rs`: YAML task persistence and JSONL event append/read.
 - `src/policy.rs`: default policy and task triage decision helpers.
 - `src/launcher.rs`: tmux session naming, command construction, dry-run dispatch, and executable dispatch.
 - `src/output.rs`: human-readable CLI formatting.
 - `docs/agent-integrations/main-agent.md`: instructions for Claude Code/Codex main agents.
-- `tests/cli_task_flow.rs`: end-to-end CLI tests using a temporary AOC home.
+- `tests/cli_task_flow.rs`: end-to-end CLI tests using a temporary HelmAgent home.
 - `tests/store_tests.rs`: store persistence tests.
 - `tests/policy_tests.rs`: policy decision tests.
 - `tests/launcher_tests.rs`: launcher command tests.
@@ -73,7 +73,7 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "aoc"
+name = "helm-agent"
 path = "src/main.rs"
 
 [dependencies]
@@ -173,7 +173,7 @@ Run:
 
 ```bash
 git add Cargo.toml src/main.rs src/lib.rs src/adapter.rs src/cli.rs src/domain.rs src/launcher.rs src/output.rs src/paths.rs src/policy.rs src/store.rs
-git commit -m "feat: scaffold aoc rust cli"
+git commit -m "feat: scaffold helmagent rust cli"
 ```
 
 Expected: commit succeeds.
@@ -543,21 +543,21 @@ Create `src/paths.rs` with this content:
 
 ```rust
 use anyhow::{anyhow, Result};
-use directories::ProjectDirs;
+use directories::BaseDirs;
 use std::env;
 use std::path::PathBuf;
 
-pub const AOC_HOME_ENV: &str = "AOC_HOME";
+pub const HELM_AGENT_HOME_ENV: &str = "HELM_AGENT_HOME";
 
-pub fn aoc_home() -> Result<PathBuf> {
-    if let Some(path) = env::var_os(AOC_HOME_ENV) {
+pub fn helm_agent_home() -> Result<PathBuf> {
+    if let Some(path) = env::var_os(HELM_AGENT_HOME_ENV) {
         return Ok(PathBuf::from(path));
     }
 
-    let dirs = ProjectDirs::from("dev", "helm-agent", "agent-ops-center")
-        .ok_or_else(|| anyhow!("could not resolve a data directory for Agent Ops Center"))?;
+    let dirs = BaseDirs::new()
+        .ok_or_else(|| anyhow!("could not resolve a home directory for HelmAgent"))?;
 
-    Ok(dirs.data_dir().to_path_buf())
+    Ok(dirs.home_dir().join(".helm-agent"))
 }
 ```
 
@@ -706,9 +706,9 @@ use assert_cmd::Command;
 use predicates::str::contains;
 use tempfile::tempdir;
 
-fn aoc_with_home(home: &std::path::Path) -> Command {
-    let mut cmd = Command::cargo_bin("aoc").unwrap();
-    cmd.env("AOC_HOME", home);
+fn helm_agent_with_home(home: &std::path::Path) -> Command {
+    let mut cmd = Command::cargo_bin("helm-agent").unwrap();
+    cmd.env("HELM_AGENT_HOME", home);
     cmd
 }
 
@@ -716,7 +716,7 @@ fn aoc_with_home(home: &std::path::Path) -> Command {
 fn create_status_event_and_resume_task() {
     let home = tempdir().unwrap();
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "create",
@@ -731,7 +731,7 @@ fn create_status_event_and_resume_task() {
         .success()
         .stdout(contains("Created PM-20260509-001"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "event",
@@ -745,7 +745,7 @@ fn create_status_event_and_resume_task() {
         .success()
         .stdout(contains("Recorded progress for PM-20260509-001"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-001"])
         .assert()
         .success()
@@ -753,7 +753,7 @@ fn create_status_event_and_resume_task() {
         .stdout(contains("Fix login redirect bug"))
         .stdout(contains("Found redirect handler"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "resume", "PM-20260509-001"])
         .assert()
         .success()
@@ -822,7 +822,7 @@ Create `src/cli.rs` with this content:
 ```rust
 use crate::domain::{TaskEvent, TaskRecord};
 use crate::output;
-use crate::paths::aoc_home;
+use crate::paths::helm_agent_home;
 use crate::store::TaskStore;
 use anyhow::Result;
 use clap::{Args, Parser, Subcommand};
@@ -830,8 +830,8 @@ use std::path::PathBuf;
 use time::OffsetDateTime;
 
 #[derive(Debug, Parser)]
-#[command(name = "aoc")]
-#[command(about = "Agent Ops Center local coordinator")]
+#[command(name = "helm-agent")]
+#[command(about = "HelmAgent local coordinator")]
 pub struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -887,7 +887,7 @@ struct EventArgs {
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let store = TaskStore::new(aoc_home()?);
+    let store = TaskStore::new(helm_agent_home()?);
 
     match cli.command {
         Command::Task(task) => handle_task(task, &store),
@@ -986,7 +986,7 @@ Append this test to `tests/cli_task_flow.rs`:
 fn review_accept_and_request_changes_update_status() {
     let home = tempdir().unwrap();
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "create",
@@ -1000,19 +1000,19 @@ fn review_accept_and_request_changes_update_status() {
         .assert()
         .success();
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "review", "PM-20260509-002", "--accept"])
         .assert()
         .success()
         .stdout(contains("Accepted PM-20260509-002"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-002"])
         .assert()
         .success()
         .stdout(contains("Done"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "review",
@@ -1024,7 +1024,7 @@ fn review_accept_and_request_changes_update_status() {
         .success()
         .stdout(contains("Requested changes for PM-20260509-002"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-002"])
         .assert()
         .success()
@@ -1332,14 +1332,14 @@ fn launcher_builds_tmux_session_and_recovery_commands() {
 
     let launch = Launcher::new().dry_run(&plan);
 
-    assert_eq!(launch.tmux_session, "aoc-PM-20260509-001-claude");
+    assert_eq!(launch.tmux_session, "helmagent-PM-20260509-001-claude");
     assert_eq!(
         launch.attach_command,
-        "tmux attach -t aoc-PM-20260509-001-claude"
+        "tmux attach -t helmagent-PM-20260509-001-claude"
     );
     assert_eq!(
         launch.start_command,
-        "tmux new-session -d -s aoc-PM-20260509-001-claude -c /repo claude"
+        "tmux new-session -d -s helmagent-PM-20260509-001-claude -c /repo claude"
     );
     assert_eq!(launch.resume_command, "claude --resume <session-id>");
 }
@@ -1448,7 +1448,7 @@ impl Launcher {
     pub fn dry_run(&self, plan: &DispatchPlan) -> LaunchPreview {
         let runtime = plan.runtime.as_str();
         let adapter = RuntimeAdapter::for_runtime(plan.runtime);
-        let tmux_session = format!("aoc-{}-{runtime}", plan.task_id);
+        let tmux_session = format!("helmagent-{}-{runtime}", plan.task_id);
         let attach_command = format!("tmux attach -t {tmux_session}");
         let start_command = format!(
             "tmux new-session -d -s {tmux_session} -c {} {}",
@@ -1476,7 +1476,7 @@ Append this test to `tests/cli_task_flow.rs`:
 fn dry_run_dispatch_records_recovery_commands() {
     let home = tempdir().unwrap();
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "create",
@@ -1490,7 +1490,7 @@ fn dry_run_dispatch_records_recovery_commands() {
         .assert()
         .success();
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "dispatch",
@@ -1502,13 +1502,13 @@ fn dry_run_dispatch_records_recovery_commands() {
         .assert()
         .success()
         .stdout(contains("Dry-run dispatch PM-20260509-003"))
-        .stdout(contains("tmux attach -t aoc-PM-20260509-003-claude"));
+        .stdout(contains("tmux attach -t helmagent-PM-20260509-003-claude"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "resume", "PM-20260509-003"])
         .assert()
         .success()
-        .stdout(contains("tmux attach -t aoc-PM-20260509-003-claude"))
+        .stdout(contains("tmux attach -t helmagent-PM-20260509-003-claude"))
         .stdout(contains("claude --resume <session-id>"));
 }
 ```
@@ -1686,8 +1686,8 @@ fn launch_executes_tmux_with_expected_arguments() {
     let launch = Launcher::with_tmux_bin(tmux_bin).launch(&plan).unwrap();
     let args = fs::read_to_string(args_file).unwrap();
 
-    assert_eq!(launch.tmux_session, "aoc-PM-20260509-004-claude");
-    assert!(args.contains("new-session -d -s aoc-PM-20260509-004-claude -c /repo claude"));
+    assert_eq!(launch.tmux_session, "helmagent-PM-20260509-004-claude");
+    assert!(args.contains("new-session -d -s helmagent-PM-20260509-004-claude -c /repo claude"));
 }
 ```
 
@@ -1740,7 +1740,7 @@ impl Default for Launcher {
 
 impl Launcher {
     pub fn new() -> Self {
-        let tmux_bin = std::env::var_os("AOC_TMUX_BIN")
+        let tmux_bin = std::env::var_os("HELM_AGENT_TMUX_BIN")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("tmux"));
         Self { tmux_bin }
@@ -1753,7 +1753,7 @@ impl Launcher {
     pub fn dry_run(&self, plan: &DispatchPlan) -> LaunchPreview {
         let runtime = plan.runtime.as_str();
         let adapter = RuntimeAdapter::for_runtime(plan.runtime);
-        let tmux_session = format!("aoc-{}-{runtime}", plan.task_id);
+        let tmux_session = format!("helmagent-{}-{runtime}", plan.task_id);
         let attach_command = format!("tmux attach -t {tmux_session}");
         let start_command = format!(
             "tmux new-session -d -s {tmux_session} -c {} {}",
@@ -1821,7 +1821,7 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
     permissions.set_mode(0o755);
     fs::set_permissions(&tmux_bin, permissions).unwrap();
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args([
             "task",
             "create",
@@ -1835,8 +1835,8 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success();
 
-    let mut dispatch = aoc_with_home(home.path());
-    dispatch.env("AOC_TMUX_BIN", &tmux_bin);
+    let mut dispatch = helm_agent_with_home(home.path());
+    dispatch.env("HELM_AGENT_TMUX_BIN", &tmux_bin);
     dispatch
         .args([
             "task",
@@ -1848,13 +1848,13 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("Started PM-20260509-004"))
-        .stdout(contains("tmux attach -t aoc-PM-20260509-004-claude"));
+        .stdout(contains("tmux attach -t helmagent-PM-20260509-004-claude"));
 
     assert!(fs::read_to_string(args_file)
         .unwrap()
-        .contains("new-session -d -s aoc-PM-20260509-004-claude -c /repo claude"));
+        .contains("new-session -d -s helmagent-PM-20260509-004-claude -c /repo claude"));
 
-    aoc_with_home(home.path())
+    helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-004"])
         .assert()
         .success()
@@ -1971,13 +1971,13 @@ Create `docs/agent-integrations/main-agent.md` with this content:
 ```markdown
 # Main Agent Usage Guide
 
-Agent Ops Center is controlled through the `aoc` CLI. Claude Code, Codex, and other main agents should treat `aoc` as the source of truth for task state.
+HelmAgent is controlled through the `helm-agent` CLI. Claude Code, Codex, and other main agents should treat `helm-agent` as the source of truth for task state.
 
 ## Main Agent Rules
 
 1. Create a task before delegating work.
-2. Use `aoc task status <id>` before reporting progress to the user.
-3. Use `aoc task dispatch <id> --runtime <runtime> --dry-run` before starting a child agent.
+2. Use `helm-agent task status <id>` before reporting progress to the user.
+3. Use `helm-agent task dispatch <id> --runtime <runtime> --dry-run` before starting a child agent.
 4. Do not claim a code-changing task is complete until it is in `ready_for_review` or the user accepts it.
 5. Always show the user the attach and resume commands for delegated work.
 6. Ask before using Codex unless the user explicitly approved Codex for this task.
@@ -1985,13 +1985,13 @@ Agent Ops Center is controlled through the `aoc` CLI. Claude Code, Codex, and ot
 ## Common Commands
 
 ```bash
-aoc task create --id PM-20260509-001 --title "Fix login redirect bug" --project /path/to/repo
-aoc task event PM-20260509-001 --type progress --message "Found redirect handler"
-aoc task dispatch PM-20260509-001 --runtime claude --dry-run
-aoc task status PM-20260509-001
-aoc task resume PM-20260509-001
-aoc task review PM-20260509-001 --accept
-aoc task review PM-20260509-001 --request-changes "Add regression test"
+helm-agent task create --id PM-20260509-001 --title "Fix login redirect bug" --project /path/to/repo
+helm-agent task event PM-20260509-001 --type progress --message "Found redirect handler"
+helm-agent task dispatch PM-20260509-001 --runtime claude --dry-run
+helm-agent task status PM-20260509-001
+helm-agent task resume PM-20260509-001
+helm-agent task review PM-20260509-001 --accept
+helm-agent task review PM-20260509-001 --request-changes "Add regression test"
 ```
 
 ## Delegation Summary Template
@@ -2014,7 +2014,7 @@ Replace `README.md` with this content:
 ```markdown
 # HelmAgent
 
-HelmAgent provides the `aoc` CLI, a local Agent Ops Center for coordinating coding agents through trackable tasks, tmux sessions, and human review checkpoints.
+HelmAgent provides the `helm-agent` CLI, a local coordination tool for coding agents with trackable tasks, tmux sessions, and human review checkpoints.
 
 ## V1 Focus
 
@@ -2028,8 +2028,8 @@ HelmAgent provides the `aoc` CLI, a local Agent Ops Center for coordinating codi
 
 ```bash
 cargo test
-cargo run --bin aoc -- task create --id PM-20260509-001 --title "Example" --project .
-cargo run --bin aoc -- task status PM-20260509-001
+cargo run --bin helm-agent -- task create --id PM-20260509-001 --title "Example" --project .
+cargo run --bin helm-agent -- task status PM-20260509-001
 ```
 
 ## Main Agent Integration
@@ -2042,7 +2042,7 @@ See `docs/agent-integrations/main-agent.md`.
 Run:
 
 ```bash
-cargo run --bin aoc -- task create --id PM-20260509-900 --title "Docs smoke task" --project .
+cargo run --bin helm-agent -- task create --id PM-20260509-900 --title "Docs smoke task" --project .
 ```
 
 Expected: exits 0 and prints `Created PM-20260509-900`.
@@ -2088,11 +2088,11 @@ Expected: PASS.
 Run:
 
 ```bash
-AOC_HOME=/tmp/aoc-smoke cargo run --bin aoc -- task create --id PM-20260509-999 --title "Smoke task" --project .
-AOC_HOME=/tmp/aoc-smoke cargo run --bin aoc -- task event PM-20260509-999 --type progress --message "Smoke progress"
-AOC_HOME=/tmp/aoc-smoke cargo run --bin aoc -- task dispatch PM-20260509-999 --runtime claude --dry-run
-AOC_HOME=/tmp/aoc-smoke cargo run --bin aoc -- task status PM-20260509-999
-AOC_HOME=/tmp/aoc-smoke cargo run --bin aoc -- task resume PM-20260509-999
+HELM_AGENT_HOME=/tmp/helm-agent-smoke cargo run --bin helm-agent -- task create --id PM-20260509-999 --title "Smoke task" --project .
+HELM_AGENT_HOME=/tmp/helm-agent-smoke cargo run --bin helm-agent -- task event PM-20260509-999 --type progress --message "Smoke progress"
+HELM_AGENT_HOME=/tmp/helm-agent-smoke cargo run --bin helm-agent -- task dispatch PM-20260509-999 --runtime claude --dry-run
+HELM_AGENT_HOME=/tmp/helm-agent-smoke cargo run --bin helm-agent -- task status PM-20260509-999
+HELM_AGENT_HOME=/tmp/helm-agent-smoke cargo run --bin helm-agent -- task resume PM-20260509-999
 ```
 
 Expected:
@@ -2102,7 +2102,7 @@ Created PM-20260509-999
 Recorded progress for PM-20260509-999
 Dry-run dispatch PM-20260509-999
 PM-20260509-999 [Queued]
-Attach: tmux attach -t aoc-PM-20260509-999-claude
+Attach: tmux attach -t helmagent-PM-20260509-999-claude
 Resume: claude --resume <session-id>
 ```
 
@@ -2122,7 +2122,7 @@ If Step 4 shows tracked implementation files changed because of verification fix
 
 ```bash
 git add <changed implementation files>
-git commit -m "fix: stabilize aoc verification"
+git commit -m "fix: stabilize helm-agent verification"
 ```
 
 Expected: commit succeeds when there are fixes. If there are no changes, skip this command.
