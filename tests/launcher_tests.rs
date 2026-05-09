@@ -1,15 +1,15 @@
 use helm_agent::adapter::RuntimeAdapter;
 use helm_agent::domain::AgentRuntime;
-use helm_agent::launcher::LaunchPlan;
-use std::path::Path;
+use helm_agent::launcher::{DispatchPlan, Launcher};
+use std::path::PathBuf;
 
 #[test]
 fn adapter_metadata_matches_runtime_capabilities() {
     let claude = RuntimeAdapter::for_runtime(AgentRuntime::Claude);
     assert_eq!(claude.command, "claude");
     assert_eq!(
-        claude.resume_command("native-123"),
-        "claude --resume native-123"
+        claude.native_resume_template,
+        "claude --resume <session-id>"
     );
     assert!(claude.native_resume_available);
     assert!(!claude.acp_supported);
@@ -17,8 +17,8 @@ fn adapter_metadata_matches_runtime_capabilities() {
     let codex = RuntimeAdapter::for_runtime(AgentRuntime::Codex);
     assert_eq!(codex.command, "codex");
     assert_eq!(
-        codex.resume_command("native-123"),
-        "codex resume native-123 --all"
+        codex.native_resume_template,
+        "codex resume <session-id> --all"
     );
     assert!(codex.native_resume_available);
     assert!(!codex.acp_supported);
@@ -26,21 +26,21 @@ fn adapter_metadata_matches_runtime_capabilities() {
     let opencode = RuntimeAdapter::for_runtime(AgentRuntime::OpenCode);
     assert_eq!(opencode.command, "opencode");
     assert_eq!(
-        opencode.resume_command("native-123"),
-        "opencode resume native-123"
+        opencode.native_resume_template,
+        "opencode resume <session-id>"
     );
     assert!(!opencode.native_resume_available);
     assert!(!opencode.acp_supported);
 }
 
 #[test]
-fn dry_run_launch_plan_builds_tmux_and_recovery_commands() {
-    let launch = LaunchPlan::dry_run(
-        "PM-20260509-007",
-        AgentRuntime::Claude,
-        Path::new("/repo/project"),
-        "native-123",
-    );
+fn dry_run_preview_builds_tmux_and_recovery_commands() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-007".to_string(),
+        runtime: AgentRuntime::Claude,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
 
     assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-007-claude");
     assert_eq!(
@@ -51,17 +51,20 @@ fn dry_run_launch_plan_builds_tmux_and_recovery_commands() {
         launch.attach_command,
         "tmux attach -t helm-agent-PM-20260509-007-claude"
     );
-    assert_eq!(launch.resume_command, "claude --resume native-123");
+    assert_eq!(
+        launch.resume_command.as_deref(),
+        Some("claude --resume <session-id>")
+    );
 }
 
 #[test]
-fn codex_dry_run_launch_plan_uses_codex_resume_command() {
-    let launch = LaunchPlan::dry_run(
-        "PM-20260509-008",
-        AgentRuntime::Codex,
-        Path::new("/repo/project"),
-        "codex-session",
-    );
+fn codex_dry_run_preview_uses_placeholder_resume_template() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-008".to_string(),
+        runtime: AgentRuntime::Codex,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
 
     assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-008-codex");
     assert_eq!(
@@ -72,5 +75,29 @@ fn codex_dry_run_launch_plan_uses_codex_resume_command() {
         launch.attach_command,
         "tmux attach -t helm-agent-PM-20260509-008-codex"
     );
-    assert_eq!(launch.resume_command, "codex resume codex-session --all");
+    assert_eq!(
+        launch.resume_command.as_deref(),
+        Some("codex resume <session-id> --all")
+    );
+}
+
+#[test]
+fn opencode_dry_run_preview_has_no_native_resume_command() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-009".to_string(),
+        runtime: AgentRuntime::OpenCode,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
+
+    assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-009-opencode");
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s helm-agent-PM-20260509-009-opencode -c /repo/project opencode"
+    );
+    assert_eq!(
+        launch.attach_command,
+        "tmux attach -t helm-agent-PM-20260509-009-opencode"
+    );
+    assert_eq!(launch.resume_command, None);
 }

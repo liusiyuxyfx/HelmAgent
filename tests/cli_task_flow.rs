@@ -190,7 +190,7 @@ fn dry_run_dispatch_records_recovery_commands() {
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
         ))
-        .stdout(contains("Resume: codex resume PM-20260509-004 --all"));
+        .stdout(contains("Resume: codex resume <session-id> --all"));
 
     let store = TaskStore::new(home.path().to_path_buf());
     let task = store.load_task("PM-20260509-004").unwrap();
@@ -204,6 +204,10 @@ fn dry_run_dispatch_records_recovery_commands() {
     assert_eq!(
         task.progress.next_action,
         "Start or inspect child agent session"
+    );
+    assert_eq!(
+        task.recovery.resume_command.as_deref(),
+        Some("codex resume <session-id> --all")
     );
     let events = store.read_events("PM-20260509-004").unwrap();
     let event = events.last().unwrap();
@@ -220,7 +224,65 @@ fn dry_run_dispatch_records_recovery_commands() {
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
         ))
-        .stdout(contains("Resume: codex resume PM-20260509-004 --all"));
+        .stdout(contains("Resume: codex resume <session-id> --all"));
+}
+
+#[test]
+fn dry_run_dispatch_omits_unavailable_native_resume_command() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-005",
+            "--title",
+            "Dispatch task to OpenCode",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-005",
+            "--runtime",
+            "opencode",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Dry-run dispatch PM-20260509-005"))
+        .stdout(contains(
+            "Start: tmux new-session -d -s helm-agent-PM-20260509-005-opencode -c /repo/project opencode",
+        ))
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260509-005-opencode",
+        ))
+        .stdout(contains("Resume: No native resume command recorded"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260509-005").unwrap();
+    assert_eq!(task.status, TaskStatus::Queued);
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::OpenCode));
+    assert_eq!(
+        task.assignment.tmux_session.as_deref(),
+        Some("helm-agent-PM-20260509-005-opencode")
+    );
+    assert_eq!(task.recovery.resume_command, None);
+
+    helm_agent_with_home(home.path())
+        .args(["task", "resume", "PM-20260509-005"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260509-005-opencode",
+        ))
+        .stdout(contains("Resume: No native resume command recorded"));
 }
 
 #[test]

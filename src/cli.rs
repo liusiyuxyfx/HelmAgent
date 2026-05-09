@@ -1,5 +1,5 @@
 use crate::domain::{AgentRuntime, ReviewState, TaskEvent, TaskRecord, TaskStatus};
-use crate::launcher::LaunchPlan;
+use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
 use crate::paths::helm_agent_home;
 use crate::store::TaskStore;
@@ -164,13 +164,18 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             let now = OffsetDateTime::now_utc();
             let mut task = store.load_task(&args.id)?;
             let runtime = AgentRuntime::from(args.runtime);
-            let launch = LaunchPlan::dry_run(&args.id, runtime, &task.project.path, &args.id);
+            let dispatch = DispatchPlan {
+                task_id: args.id.clone(),
+                runtime,
+                cwd: task.project.path.clone(),
+            };
+            let launch = Launcher::new().dry_run(&dispatch);
 
             task.status = TaskStatus::Queued;
             task.assignment.runtime = Some(runtime);
             task.assignment.tmux_session = Some(launch.tmux_session.clone());
             task.recovery.attach_command = Some(launch.attach_command.clone());
-            task.recovery.resume_command = Some(launch.resume_command.clone());
+            task.recovery.resume_command = launch.resume_command.clone();
             task.progress.last_event = if args.dry_run {
                 "Dry-run dispatch recorded".to_string()
             } else {
@@ -194,7 +199,13 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             }
             println!("Start: {}", launch.start_command);
             println!("Attach: {}", launch.attach_command);
-            println!("Resume: {}", launch.resume_command);
+            println!(
+                "Resume: {}",
+                launch
+                    .resume_command
+                    .as_deref()
+                    .unwrap_or("No native resume command recorded")
+            );
             Ok(())
         }
         TaskSubcommand::Event(args) => {
