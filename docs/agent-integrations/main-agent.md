@@ -11,6 +11,7 @@ HelmAgent should be the source of truth for delegated coding work. Claude Code, 
 - Only the human or an explicitly authorized main agent should run `helm-agent task review --accept` or `helm-agent task review --request-changes`.
 - Show attach and resume commands whenever work is delegated or recovered.
 - Ask before using Codex unless the user has already approved it for the task or workspace.
+- Use `--confirm` only after approval when a real dispatch is blocked by policy, such as Codex or elevated-risk work.
 - Prefer free agents for small, low-risk tasks.
 
 ## Common Commands
@@ -62,6 +63,12 @@ Start a real tmux-backed child-agent session after the dry run looks correct:
 
 ```bash
 helm-agent task dispatch --runtime claude PM-20260509-101
+```
+
+Start Codex only after approval:
+
+```bash
+helm-agent task dispatch --runtime codex --confirm PM-20260509-101
 ```
 
 If a workspace uses a non-default tmux binary, set `HELM_AGENT_TMUX_BIN` before real dispatch. HelmAgent-created tmux sessions use the `helm-agent-` session prefix.

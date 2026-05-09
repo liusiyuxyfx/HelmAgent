@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use helm_agent::domain::{AgentRuntime, TaskStatus};
+use helm_agent::domain::{AgentRuntime, RiskLevel, TaskStatus};
 use helm_agent::store::TaskStore;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::{contains, is_empty};
@@ -331,43 +331,43 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
             "dispatch",
             "PM-20260509-006",
             "--runtime",
-            "codex",
+            "claude",
         ])
         .assert()
         .success()
         .stdout(contains("Started PM-20260509-006"))
         .stdout(contains(
-            "Start: tmux new-session -d -s helm-agent-PM-20260509-006-codex -c '/repo/my project' codex",
+            "Start: tmux new-session -d -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude",
         ))
         .stdout(contains(
-            "Attach: tmux attach -t helm-agent-PM-20260509-006-codex",
+            "Attach: tmux attach -t helm-agent-PM-20260509-006-claude",
         ))
-        .stdout(contains("Resume: codex resume <session-id> --all"));
+        .stdout(contains("Resume: claude --resume <session-id>"));
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
-        "new-session\n-d\n-s\nhelm-agent-PM-20260509-006-codex\n-c\n/repo/my project\ncodex\n"
+        "new-session\n-d\n-s\nhelm-agent-PM-20260509-006-claude\n-c\n/repo/my project\nclaude\n"
     );
 
     let store = TaskStore::new(home.path().to_path_buf());
     let task = store.load_task("PM-20260509-006").unwrap();
     assert_eq!(task.status, TaskStatus::Running);
-    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Codex));
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Claude));
     assert_eq!(
         task.assignment.tmux_session.as_deref(),
-        Some("helm-agent-PM-20260509-006-codex")
+        Some("helm-agent-PM-20260509-006-claude")
     );
     assert_eq!(task.progress.last_event, "Dispatch started");
     assert_eq!(
         task.recovery.attach_command.as_deref(),
-        Some("tmux attach -t helm-agent-PM-20260509-006-codex")
+        Some("tmux attach -t helm-agent-PM-20260509-006-claude")
     );
     let events = store.read_events("PM-20260509-006").unwrap();
     let event = events.last().unwrap();
     assert_eq!(event.event_type, "dispatch_started");
     assert_eq!(
         event.message,
-        "tmux new-session -d -s helm-agent-PM-20260509-006-codex -c '/repo/my project' codex"
+        "tmux new-session -d -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude"
     );
 
     helm_agent_with_home(home.path())
@@ -375,6 +375,100 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("[running]"));
+}
+
+#[test]
+fn codex_dispatch_requires_confirmation_before_tmux_launch() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-007",
+            "--title",
+            "Dispatch task to Codex",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "dispatch", "PM-20260509-007", "--runtime", "codex"])
+        .assert()
+        .failure()
+        .stderr(contains("requires --confirm"));
+
+    assert!(!record_path.exists());
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260509-007"])
+        .assert()
+        .success()
+        .stdout(contains("[inbox]"));
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-007",
+            "--runtime",
+            "codex",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260509-007"));
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "new-session\n-d\n-s\nhelm-agent-PM-20260509-007-codex\n-c\n/repo/project\ncodex\n"
+    );
+}
+
+#[test]
+fn medium_risk_dispatch_requires_confirmation_before_tmux_launch() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-008",
+            "--title",
+            "Dispatch medium risk task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = store.load_task("PM-20260509-008").unwrap();
+    task.risk = RiskLevel::Medium;
+    store.save_task(&task).unwrap();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "dispatch", "PM-20260509-008", "--runtime", "claude"])
+        .assert()
+        .failure()
+        .stderr(contains("requires --confirm"));
+
+    assert!(!record_path.exists());
 }
 
 #[test]

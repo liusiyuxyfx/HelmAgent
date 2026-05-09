@@ -103,12 +103,56 @@ fn unsafe_task_ids_are_sanitized_for_paths() {
         temp.path()
             .join("tasks")
             .join("unknown")
-            .join("___PM-20260509-001_escape.yaml")
+            .join("%2E%2E%2FPM-20260509-001%2Fescape.yaml")
     );
     assert_eq!(
         store.session_dir("/tmp/PM-20260509-001"),
-        temp.path().join("sessions").join("_tmp_PM-20260509-001")
+        temp.path()
+            .join("sessions")
+            .join("%2Ftmp%2FPM-20260509-001")
     );
+}
+
+#[test]
+fn unsafe_task_ids_do_not_alias_safe_ids() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let now = OffsetDateTime::UNIX_EPOCH;
+    let task = TaskRecord::new(
+        "A/B".to_string(),
+        "Unsafe id task".to_string(),
+        "/repo".into(),
+        now,
+    );
+
+    store.save_task(&task).unwrap();
+
+    assert_ne!(store.task_path("A/B"), store.task_path("A_B"));
+    assert_ne!(store.events_path("A/B"), store.events_path("A_B"));
+    assert!(store.load_task("A_B").is_err());
+}
+
+#[test]
+fn load_task_rejects_mismatched_record_id() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let now = OffsetDateTime::UNIX_EPOCH;
+    let task = TaskRecord::new(
+        "A/B".to_string(),
+        "Mismatched id task".to_string(),
+        "/repo".into(),
+        now,
+    );
+    let path = store.task_path("A_B");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, serde_yaml::to_string(&task).unwrap()).unwrap();
+
+    let error = store
+        .load_task("A_B")
+        .expect_err("mismatched record id should fail");
+    let error_text = format!("{error:#}");
+
+    assert!(error_text.contains("task id mismatch"), "{error_text}");
 }
 
 #[test]

@@ -1,5 +1,6 @@
 use crate::domain::{TaskEvent, TaskRecord};
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
@@ -54,7 +55,18 @@ impl TaskStore {
         let path = self.task_path(task_id);
         let content =
             fs::read_to_string(&path).with_context(|| format!("read task {}", path.display()))?;
-        serde_yaml::from_str(&content).with_context(|| format!("parse task {}", path.display()))
+        let task: TaskRecord = serde_yaml::from_str(&content)
+            .with_context(|| format!("parse task {}", path.display()))?;
+
+        if task.id != task_id {
+            bail!(
+                "task id mismatch: requested {task_id}, loaded {} from {}",
+                task.id,
+                path.display()
+            );
+        }
+
+        Ok(task)
     }
 
     pub fn append_event(&self, event: &TaskEvent) -> Result<()> {
@@ -91,9 +103,17 @@ impl TaskStore {
             if line.trim().is_empty() {
                 continue;
             }
-            events.push(serde_json::from_str(&line).with_context(|| {
+            let event: TaskEvent = serde_json::from_str(&line).with_context(|| {
                 format!("parse event line {line_number} from {}", path.display())
-            })?);
+            })?;
+            if event.task_id != task_id {
+                bail!(
+                    "event task id mismatch on line {line_number} from {}: requested {task_id}, loaded {}",
+                    path.display(),
+                    event.task_id
+                );
+            }
+            events.push(event);
         }
 
         Ok(events)
@@ -114,10 +134,15 @@ fn task_year(task_id: &str) -> &str {
 }
 
 fn safe_task_component(task_id: &str) -> String {
-    let sanitized: String = task_id
-        .chars()
-        .map(|ch| if is_safe_task_char(ch) { ch } else { '_' })
-        .collect();
+    let mut sanitized = String::new();
+    for byte in task_id.bytes() {
+        let ch = byte as char;
+        if is_safe_task_char(ch) {
+            sanitized.push(ch);
+        } else {
+            write!(&mut sanitized, "%{byte:02X}").expect("write to string");
+        }
+    }
 
     if sanitized.is_empty() {
         "unknown-task".to_string()

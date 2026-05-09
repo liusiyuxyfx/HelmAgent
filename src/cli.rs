@@ -2,6 +2,7 @@ use crate::domain::{AgentRuntime, ReviewState, TaskEvent, TaskRecord, TaskStatus
 use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
 use crate::paths::helm_agent_home;
+use crate::policy::{DispatchDecision, PolicyInput};
 use crate::store::TaskStore;
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -64,6 +65,8 @@ struct DispatchArgs {
     runtime: RuntimeArg,
     #[arg(long = "dry-run")]
     dry_run: bool,
+    #[arg(long)]
+    confirm: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -169,6 +172,25 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 runtime,
                 cwd: task.project.path.clone(),
             };
+            let policy = PolicyInput {
+                risk: task.risk,
+                runtime,
+                writes_files: true,
+                paid_runtime: runtime == AgentRuntime::Codex,
+                cross_project: false,
+                network_sensitive: false,
+            };
+            if !args.dry_run
+                && policy.evaluate() == DispatchDecision::ConfirmRequired
+                && !args.confirm
+            {
+                bail!(
+                    "dispatch {} with runtime {} requires --confirm",
+                    args.id,
+                    runtime.as_str()
+                );
+            }
+
             let launcher = Launcher::new();
             let launch = if args.dry_run {
                 launcher.dry_run(&dispatch)

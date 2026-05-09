@@ -7,6 +7,7 @@ HelmAgent is a local coordination CLI for coding agents with task records, tmux 
 - Durable task records under `HELM_AGENT_HOME`.
 - Main-agent workflows that keep HelmAgent as the source of truth for task state.
 - Child-agent dispatch previews and tmux-backed sessions.
+- Policy gates that require `--confirm` before paid Codex or elevated-risk real dispatches.
 - Attach, resume, and review checkpoints for recovering delegated work.
 
 ## Development
