@@ -133,6 +133,28 @@ fn unsafe_task_ids_do_not_alias_safe_ids() {
 }
 
 #[test]
+fn empty_task_id_does_not_alias_reserved_safe_id() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let now = OffsetDateTime::UNIX_EPOCH;
+    let task = TaskRecord::new(
+        String::new(),
+        "Empty id task".to_string(),
+        "/repo".into(),
+        now,
+    );
+
+    store.save_task(&task).unwrap();
+
+    assert_eq!(
+        store.task_path(""),
+        temp.path().join("tasks").join("unknown").join("%00.yaml")
+    );
+    assert_ne!(store.task_path(""), store.task_path("unknown-task"));
+    assert!(store.load_task("unknown-task").is_err());
+}
+
+#[test]
 fn load_task_rejects_mismatched_record_id() {
     let temp = tempdir().unwrap();
     let store = TaskStore::new(temp.path().to_path_buf());
@@ -153,6 +175,34 @@ fn load_task_rejects_mismatched_record_id() {
     let error_text = format!("{error:#}");
 
     assert!(error_text.contains("task id mismatch"), "{error_text}");
+}
+
+#[test]
+fn read_events_rejects_mismatched_task_id() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let event = TaskEvent::progress(
+        "A/B".to_string(),
+        "Wrong log".to_string(),
+        OffsetDateTime::UNIX_EPOCH,
+    );
+    let path = store.events_path("A_B");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!("{}\n", serde_json::to_string(&event).unwrap()),
+    )
+    .unwrap();
+
+    let error = store
+        .read_events("A_B")
+        .expect_err("mismatched event task id should fail");
+    let error_text = format!("{error:#}");
+
+    assert!(
+        error_text.contains("event task id mismatch"),
+        "{error_text}"
+    );
 }
 
 #[test]

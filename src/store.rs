@@ -145,7 +145,7 @@ fn safe_task_component(task_id: &str) -> String {
     }
 
     if sanitized.is_empty() {
-        "unknown-task".to_string()
+        "%00".to_string()
     } else {
         sanitized
     }
