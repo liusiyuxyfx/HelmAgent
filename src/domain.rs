@@ -31,6 +31,7 @@ pub enum RiskLevel {
 pub enum AgentRuntime {
     Claude,
     Codex,
+    #[serde(rename = "opencode")]
     OpenCode,
 }
 

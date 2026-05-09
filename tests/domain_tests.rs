@@ -1,6 +1,4 @@
-use helm_agent::domain::{
-    AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus,
-};
+use helm_agent::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use time::OffsetDateTime;
 
 #[test]
@@ -56,4 +54,21 @@ fn runtime_display_names_match_cli_values() {
     assert_eq!(AgentRuntime::Claude.as_str(), "claude");
     assert_eq!(AgentRuntime::Codex.as_str(), "codex");
     assert_eq!(AgentRuntime::OpenCode.as_str(), "opencode");
+}
+
+#[test]
+fn runtime_serialization_matches_cli_values() {
+    let runtimes = [
+        (AgentRuntime::Claude, "claude"),
+        (AgentRuntime::Codex, "codex"),
+        (AgentRuntime::OpenCode, "opencode"),
+    ];
+
+    for (runtime, value) in runtimes {
+        let yaml = serde_yaml::to_string(&runtime).unwrap();
+        assert!(yaml.contains(value), "{yaml}");
+
+        let parsed: AgentRuntime = serde_yaml::from_str(value).unwrap();
+        assert_eq!(parsed, runtime);
+    }
 }
