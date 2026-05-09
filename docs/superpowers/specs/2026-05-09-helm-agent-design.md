@@ -231,11 +231,11 @@ project:
 assignment:
   runtime: claude
   workflow: cc-default
-  tmux_session: helmagent-PM-20260509-001-claude
+  tmux_session: helm-agent-PM-20260509-001-claude
   native_session_id: 58fa3206-cb0-47ad-b306-912f7d122a02
   acp_session_id: null
 recovery:
-  attach_command: tmux attach -t helmagent-PM-20260509-001-claude
+  attach_command: tmux attach -t helm-agent-PM-20260509-001-claude
   resume_command: claude --resume 58fa3206-cb0-47ad-b306-912f7d122a02
 progress:
   summary: Investigating auth redirect handler.
@@ -346,15 +346,15 @@ The launcher flow:
 Session naming:
 
 ```text
-helmagent-<task-id>-<runtime>
+helm-agent-<task-id>-<runtime>
 ```
 
 Examples:
 
 ```text
-helmagent-PM-20260509-001-claude
-helmagent-PM-20260509-002-opencode
-helmagent-PM-20260509-003-codex
+helm-agent-PM-20260509-001-claude
+helm-agent-PM-20260509-002-opencode
+helm-agent-PM-20260509-003-codex
 ```
 
 Recovery paths:
@@ -478,7 +478,7 @@ recommended_action:
   - ask_agent_followup
   - take_over
 commands:
-  attach: tmux attach -t helmagent-PM-20260509-001-claude
+  attach: tmux attach -t helm-agent-PM-20260509-001-claude
   resume: claude --resume <session-id>
 ```
 

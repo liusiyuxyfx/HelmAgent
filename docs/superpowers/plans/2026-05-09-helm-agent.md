@@ -173,7 +173,7 @@ Run:
 
 ```bash
 git add Cargo.toml src/main.rs src/lib.rs src/adapter.rs src/cli.rs src/domain.rs src/launcher.rs src/output.rs src/paths.rs src/policy.rs src/store.rs
-git commit -m "feat: scaffold helmagent rust cli"
+git commit -m "feat: scaffold helm-agent rust cli"
 ```
 
 Expected: commit succeeds.
@@ -1332,14 +1332,14 @@ fn launcher_builds_tmux_session_and_recovery_commands() {
 
     let launch = Launcher::new().dry_run(&plan);
 
-    assert_eq!(launch.tmux_session, "helmagent-PM-20260509-001-claude");
+    assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-001-claude");
     assert_eq!(
         launch.attach_command,
-        "tmux attach -t helmagent-PM-20260509-001-claude"
+        "tmux attach -t helm-agent-PM-20260509-001-claude"
     );
     assert_eq!(
         launch.start_command,
-        "tmux new-session -d -s helmagent-PM-20260509-001-claude -c /repo claude"
+        "tmux new-session -d -s helm-agent-PM-20260509-001-claude -c /repo claude"
     );
     assert_eq!(launch.resume_command, "claude --resume <session-id>");
 }
@@ -1448,7 +1448,7 @@ impl Launcher {
     pub fn dry_run(&self, plan: &DispatchPlan) -> LaunchPreview {
         let runtime = plan.runtime.as_str();
         let adapter = RuntimeAdapter::for_runtime(plan.runtime);
-        let tmux_session = format!("helmagent-{}-{runtime}", plan.task_id);
+        let tmux_session = format!("helm-agent-{}-{runtime}", plan.task_id);
         let attach_command = format!("tmux attach -t {tmux_session}");
         let start_command = format!(
             "tmux new-session -d -s {tmux_session} -c {} {}",
@@ -1502,13 +1502,13 @@ fn dry_run_dispatch_records_recovery_commands() {
         .assert()
         .success()
         .stdout(contains("Dry-run dispatch PM-20260509-003"))
-        .stdout(contains("tmux attach -t helmagent-PM-20260509-003-claude"));
+        .stdout(contains("tmux attach -t helm-agent-PM-20260509-003-claude"));
 
     helm_agent_with_home(home.path())
         .args(["task", "resume", "PM-20260509-003"])
         .assert()
         .success()
-        .stdout(contains("tmux attach -t helmagent-PM-20260509-003-claude"))
+        .stdout(contains("tmux attach -t helm-agent-PM-20260509-003-claude"))
         .stdout(contains("claude --resume <session-id>"));
 }
 ```
@@ -1686,8 +1686,8 @@ fn launch_executes_tmux_with_expected_arguments() {
     let launch = Launcher::with_tmux_bin(tmux_bin).launch(&plan).unwrap();
     let args = fs::read_to_string(args_file).unwrap();
 
-    assert_eq!(launch.tmux_session, "helmagent-PM-20260509-004-claude");
-    assert!(args.contains("new-session -d -s helmagent-PM-20260509-004-claude -c /repo claude"));
+    assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-004-claude");
+    assert!(args.contains("new-session -d -s helm-agent-PM-20260509-004-claude -c /repo claude"));
 }
 ```
 
@@ -1753,7 +1753,7 @@ impl Launcher {
     pub fn dry_run(&self, plan: &DispatchPlan) -> LaunchPreview {
         let runtime = plan.runtime.as_str();
         let adapter = RuntimeAdapter::for_runtime(plan.runtime);
-        let tmux_session = format!("helmagent-{}-{runtime}", plan.task_id);
+        let tmux_session = format!("helm-agent-{}-{runtime}", plan.task_id);
         let attach_command = format!("tmux attach -t {tmux_session}");
         let start_command = format!(
             "tmux new-session -d -s {tmux_session} -c {} {}",
@@ -1848,11 +1848,11 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("Started PM-20260509-004"))
-        .stdout(contains("tmux attach -t helmagent-PM-20260509-004-claude"));
+        .stdout(contains("tmux attach -t helm-agent-PM-20260509-004-claude"));
 
     assert!(fs::read_to_string(args_file)
         .unwrap()
-        .contains("new-session -d -s helmagent-PM-20260509-004-claude -c /repo claude"));
+        .contains("new-session -d -s helm-agent-PM-20260509-004-claude -c /repo claude"));
 
     helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-004"])
@@ -2102,7 +2102,7 @@ Created PM-20260509-999
 Recorded progress for PM-20260509-999
 Dry-run dispatch PM-20260509-999
 PM-20260509-999 [Queued]
-Attach: tmux attach -t helmagent-PM-20260509-999-claude
+Attach: tmux attach -t helm-agent-PM-20260509-999-claude
 Resume: claude --resume <session-id>
 ```
 
