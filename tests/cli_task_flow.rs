@@ -1,4 +1,6 @@
 use assert_cmd::Command;
+use helm_agent::domain::{AgentRuntime, TaskStatus};
+use helm_agent::store::TaskStore;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::{contains, is_empty};
 use tempfile::tempdir;
@@ -150,6 +152,75 @@ fn review_accept_and_request_changes_update_status() {
         .success()
         .stdout(contains("[needs_changes]"))
         .stdout(contains("Add regression test"));
+}
+
+#[test]
+fn dry_run_dispatch_records_recovery_commands() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-004",
+            "--title",
+            "Dispatch task to child agent",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-004",
+            "--runtime",
+            "codex",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Dry-run dispatch PM-20260509-004"))
+        .stdout(contains(
+            "Start: tmux new-session -d -s helm-agent-PM-20260509-004-codex -c /repo/project codex",
+        ))
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
+        ))
+        .stdout(contains("Resume: codex resume PM-20260509-004 --all"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260509-004").unwrap();
+    assert_eq!(task.status, TaskStatus::Queued);
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Codex));
+    assert_eq!(
+        task.assignment.tmux_session.as_deref(),
+        Some("helm-agent-PM-20260509-004-codex")
+    );
+    assert_eq!(task.progress.last_event, "Dry-run dispatch recorded");
+    assert_eq!(
+        task.progress.next_action,
+        "Start or inspect child agent session"
+    );
+    let events = store.read_events("PM-20260509-004").unwrap();
+    let event = events.last().unwrap();
+    assert_eq!(event.event_type, "dispatch_planned");
+    assert_eq!(
+        event.message,
+        "tmux new-session -d -s helm-agent-PM-20260509-004-codex -c /repo/project codex"
+    );
+
+    helm_agent_with_home(home.path())
+        .args(["task", "resume", "PM-20260509-004"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
+        ))
+        .stdout(contains("Resume: codex resume PM-20260509-004 --all"));
 }
 
 #[test]

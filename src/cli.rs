@@ -1,4 +1,5 @@
-use crate::domain::{ReviewState, TaskEvent, TaskRecord, TaskStatus};
+use crate::domain::{AgentRuntime, ReviewState, TaskEvent, TaskRecord, TaskStatus};
+use crate::launcher::LaunchPlan;
 use crate::output;
 use crate::paths::helm_agent_home;
 use crate::store::TaskStore;
@@ -31,6 +32,7 @@ enum TaskSubcommand {
     Create(CreateArgs),
     Status(StatusArgs),
     Resume(ResumeArgs),
+    Dispatch(DispatchArgs),
     Event(EventArgs),
     Review(ReviewArgs),
 }
@@ -53,6 +55,34 @@ struct StatusArgs {
 #[derive(Debug, Args)]
 struct ResumeArgs {
     id: String,
+}
+
+#[derive(Debug, Args)]
+struct DispatchArgs {
+    id: String,
+    #[arg(long)]
+    runtime: RuntimeArg,
+    #[arg(long = "dry-run")]
+    dry_run: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "kebab_case")]
+enum RuntimeArg {
+    Claude,
+    Codex,
+    #[clap(name = "opencode")]
+    OpenCode,
+}
+
+impl From<RuntimeArg> for AgentRuntime {
+    fn from(value: RuntimeArg) -> Self {
+        match value {
+            RuntimeArg::Claude => AgentRuntime::Claude,
+            RuntimeArg::Codex => AgentRuntime::Codex,
+            RuntimeArg::OpenCode => AgentRuntime::OpenCode,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -128,6 +158,43 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
         TaskSubcommand::Resume(args) => {
             let task = store.load_task(&args.id)?;
             print!("{}", output::resume_text(&task));
+            Ok(())
+        }
+        TaskSubcommand::Dispatch(args) => {
+            let now = OffsetDateTime::now_utc();
+            let mut task = store.load_task(&args.id)?;
+            let runtime = AgentRuntime::from(args.runtime);
+            let launch = LaunchPlan::dry_run(&args.id, runtime, &task.project.path, &args.id);
+
+            task.status = TaskStatus::Queued;
+            task.assignment.runtime = Some(runtime);
+            task.assignment.tmux_session = Some(launch.tmux_session.clone());
+            task.recovery.attach_command = Some(launch.attach_command.clone());
+            task.recovery.resume_command = Some(launch.resume_command.clone());
+            task.progress.last_event = if args.dry_run {
+                "Dry-run dispatch recorded".to_string()
+            } else {
+                "Dispatch requested".to_string()
+            };
+            task.progress.next_action = "Start or inspect child agent session".to_string();
+            task.touch(now);
+
+            store.save_task(&task)?;
+            store.append_event(&TaskEvent::new(
+                args.id.clone(),
+                "dispatch_planned",
+                launch.start_command.clone(),
+                now,
+            ))?;
+
+            if args.dry_run {
+                println!("Dry-run dispatch {}", args.id);
+            } else {
+                println!("Dispatch requested {}", args.id);
+            }
+            println!("Start: {}", launch.start_command);
+            println!("Attach: {}", launch.attach_command);
+            println!("Resume: {}", launch.resume_command);
             Ok(())
         }
         TaskSubcommand::Event(args) => {
