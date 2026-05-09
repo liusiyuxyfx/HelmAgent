@@ -162,6 +162,21 @@ fn dry_run_preview_shell_quotes_single_quote_in_cwd() {
 }
 
 #[test]
+fn dry_run_preview_shell_quotes_empty_cwd() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260509-015".to_string(),
+        runtime: AgentRuntime::Codex,
+        cwd: PathBuf::from(""),
+    };
+    let launch = Launcher::new().dry_run(&dispatch);
+
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s helm-agent-PM-20260509-015-codex -c '' codex"
+    );
+}
+
+#[test]
 fn dry_run_preview_shell_quotes_unsafe_session_tokens() {
     let dispatch = DispatchPlan {
         task_id: "PM 20260509'013".to_string(),

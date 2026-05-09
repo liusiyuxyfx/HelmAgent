@@ -113,7 +113,7 @@ impl Default for Launcher {
 }
 
 fn shell_quote(value: &str) -> String {
-    if value.chars().all(is_shell_safe_char) {
+    if !value.is_empty() && value.chars().all(is_shell_safe_char) {
         return value.to_string();
     }
 
