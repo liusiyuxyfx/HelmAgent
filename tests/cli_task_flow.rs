@@ -137,3 +137,22 @@ fn event_requires_message_argument() {
         .failure()
         .stderr(contains("required"));
 }
+
+#[test]
+fn event_rejects_invalid_type() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "event",
+            "PM-20260509-001",
+            "--type",
+            "unknown",
+            "--message",
+            "No task",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("invalid value"));
+}

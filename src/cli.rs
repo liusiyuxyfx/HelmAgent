@@ -3,7 +3,7 @@ use crate::output;
 use crate::paths::helm_agent_home;
 use crate::store::TaskStore;
 use anyhow::{bail, Result};
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -58,9 +58,27 @@ struct ResumeArgs {
 struct EventArgs {
     id: String,
     #[arg(long = "type")]
-    event_type: String,
+    event_type: EventTypeArg,
     #[arg(long)]
     message: String,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+enum EventTypeArg {
+    Progress,
+    Blocked,
+    ReadyForReview,
+}
+
+impl EventTypeArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            EventTypeArg::Progress => "progress",
+            EventTypeArg::Blocked => "blocked",
+            EventTypeArg::ReadyForReview => "ready_for_review",
+        }
+    }
 }
 
 pub fn run() -> Result<()> {
@@ -110,11 +128,11 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             store.save_task(&task)?;
             store.append_event(&TaskEvent::new(
                 args.id.clone(),
-                args.event_type.clone(),
+                args.event_type.as_str(),
                 args.message,
                 now,
             ))?;
-            println!("Recorded {} for {}", args.event_type, args.id);
+            println!("Recorded {} for {}", args.event_type.as_str(), args.id);
             Ok(())
         }
     }
