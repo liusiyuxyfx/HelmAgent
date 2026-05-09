@@ -2,7 +2,7 @@ use crate::domain::{TaskEvent, TaskRecord};
 use crate::output;
 use crate::paths::helm_agent_home;
 use crate::store::TaskStore;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 use time::OffsetDateTime;
@@ -75,6 +75,10 @@ pub fn run() -> Result<()> {
 fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
     match task.command {
         TaskSubcommand::Create(args) => {
+            if store.task_path(&args.id).exists() {
+                bail!("task {} already exists", args.id);
+            }
+
             let now = OffsetDateTime::now_utc();
             let record = TaskRecord::new(args.id.clone(), args.title, args.project, now);
             store.save_task(&record)?;

@@ -6,6 +6,7 @@ fn task_status_serializes_as_snake_case() {
     let status = TaskStatus::ReadyForReview;
     let yaml = serde_yaml::to_string(&status).unwrap();
     assert!(yaml.contains("ready_for_review"));
+    assert_eq!(status.as_str(), "ready_for_review");
 }
 
 #[test]

@@ -7,9 +7,9 @@ pub fn task_status(task: &TaskRecord, events: &[TaskEvent]) -> String {
         .unwrap_or(task.progress.last_event.as_str());
 
     format!(
-        "{id} [{status:?}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n",
+        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n",
         id = task.id,
-        status = task.status,
+        status = task.status.as_str(),
         title = task.title,
         project = task.project.path.display(),
         progress = last_event,

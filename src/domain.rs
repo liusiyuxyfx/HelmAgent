@@ -45,6 +45,24 @@ impl AgentRuntime {
     }
 }
 
+impl TaskStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TaskStatus::Inbox => "inbox",
+            TaskStatus::Triaged => "triaged",
+            TaskStatus::WaitingUser => "waiting_user",
+            TaskStatus::Queued => "queued",
+            TaskStatus::Running => "running",
+            TaskStatus::Blocked => "blocked",
+            TaskStatus::ReadyForReview => "ready_for_review",
+            TaskStatus::Reviewing => "reviewing",
+            TaskStatus::NeedsChanges => "needs_changes",
+            TaskStatus::Done => "done",
+            TaskStatus::Archived => "archived",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewState {
