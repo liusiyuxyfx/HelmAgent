@@ -18,7 +18,7 @@ pub struct PolicyInput {
 
 impl PolicyInput {
     pub fn evaluate(self) -> DispatchDecision {
-        if self.risk == RiskLevel::High
+        if self.risk != RiskLevel::Low
             || self.paid_runtime
             || self.runtime == AgentRuntime::Codex
             || self.cross_project

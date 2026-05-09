@@ -1192,6 +1192,22 @@ fn codex_requires_confirmation() {
         risk: RiskLevel::Low,
         runtime: AgentRuntime::Codex,
         writes_files: false,
+        paid_runtime: false,
+        cross_project: false,
+        network_sensitive: false,
+    };
+
+    let decision = input.evaluate();
+
+    assert_eq!(decision, DispatchDecision::ConfirmRequired);
+}
+
+#[test]
+fn paid_runtime_requires_confirmation() {
+    let input = PolicyInput {
+        risk: RiskLevel::Low,
+        runtime: AgentRuntime::Claude,
+        writes_files: false,
         paid_runtime: true,
         cross_project: false,
         network_sensitive: false,
@@ -1206,6 +1222,22 @@ fn codex_requires_confirmation() {
 fn high_risk_requires_confirmation() {
     let input = PolicyInput {
         risk: RiskLevel::High,
+        runtime: AgentRuntime::Claude,
+        writes_files: false,
+        paid_runtime: false,
+        cross_project: false,
+        network_sensitive: false,
+    };
+
+    let decision = input.evaluate();
+
+    assert_eq!(decision, DispatchDecision::ConfirmRequired);
+}
+
+#[test]
+fn medium_risk_requires_confirmation() {
+    let input = PolicyInput {
+        risk: RiskLevel::Medium,
         runtime: AgentRuntime::Claude,
         writes_files: false,
         paid_runtime: false,
@@ -1254,7 +1286,7 @@ pub struct PolicyInput {
 
 impl PolicyInput {
     pub fn evaluate(self) -> DispatchDecision {
-        if self.risk == RiskLevel::High
+        if self.risk != RiskLevel::Low
             || self.paid_runtime
             || self.runtime == AgentRuntime::Codex
             || self.cross_project

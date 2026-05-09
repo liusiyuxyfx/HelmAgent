@@ -290,7 +290,7 @@ auto_start:
     - cross_project_change
 
 risk_rules:
-  high_requires_confirmation: true
+  medium_and_high_require_confirmation: true
   code_write_requires_review: true
   external_network_requires_confirmation: true
   secrets_or_credentials_requires_confirmation: true
