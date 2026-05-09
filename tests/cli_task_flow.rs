@@ -103,6 +103,101 @@ fn duplicate_create_fails_without_overwriting_task() {
 }
 
 #[test]
+fn review_accept_and_request_changes_update_status() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-002",
+            "--title",
+            "Review redirect patch",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "review", "PM-20260509-002", "--accept"])
+        .assert()
+        .success()
+        .stdout(contains("Accepted PM-20260509-002"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260509-002"])
+        .assert()
+        .success()
+        .stdout(contains("[done]"));
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "review",
+            "PM-20260509-002",
+            "--request-changes",
+            "Add regression test",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Requested changes for PM-20260509-002"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260509-002"])
+        .assert()
+        .success()
+        .stdout(contains("[needs_changes]"))
+        .stdout(contains("Add regression test"));
+}
+
+#[test]
+fn review_requires_accept_or_request_changes() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-003",
+            "--title",
+            "Review redirect patch",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "review", "PM-20260509-003"])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "review requires --accept or --request-changes <message>",
+        ));
+}
+
+#[test]
+fn review_rejects_accept_and_request_changes_together() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "review",
+            "PM-20260509-003",
+            "--accept",
+            "--request-changes",
+            "Add regression test",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
 fn missing_task_commands_fail_with_context() {
     let home = tempdir().unwrap();
 

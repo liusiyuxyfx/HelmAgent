@@ -1,4 +1,4 @@
-use crate::domain::{TaskEvent, TaskRecord};
+use crate::domain::{ReviewState, TaskEvent, TaskRecord, TaskStatus};
 use crate::output;
 use crate::paths::helm_agent_home;
 use crate::store::TaskStore;
@@ -32,6 +32,7 @@ enum TaskSubcommand {
     Status(StatusArgs),
     Resume(ResumeArgs),
     Event(EventArgs),
+    Review(ReviewArgs),
 }
 
 #[derive(Debug, Args)]
@@ -61,6 +62,15 @@ struct EventArgs {
     event_type: EventTypeArg,
     #[arg(long)]
     message: String,
+}
+
+#[derive(Debug, Args)]
+struct ReviewArgs {
+    id: String,
+    #[arg(long, conflicts_with = "request_changes")]
+    accept: bool,
+    #[arg(long = "request-changes")]
+    request_changes: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -134,6 +144,46 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             ))?;
             println!("Recorded {} for {}", args.event_type.as_str(), args.id);
             Ok(())
+        }
+        TaskSubcommand::Review(args) => {
+            let now = OffsetDateTime::now_utc();
+            let mut task = store.load_task(&args.id)?;
+
+            if args.accept {
+                task.status = TaskStatus::Done;
+                task.review.state = ReviewState::Accepted;
+                task.progress.last_event = "Review accepted".to_string();
+                task.progress.next_action = "Archive task when ready".to_string();
+                task.touch(now);
+                store.save_task(&task)?;
+                store.append_event(&TaskEvent::new(
+                    args.id.clone(),
+                    "review_accepted",
+                    "Review accepted".to_string(),
+                    now,
+                ))?;
+                println!("Accepted {}", args.id);
+                return Ok(());
+            }
+
+            if let Some(message) = args.request_changes {
+                task.status = TaskStatus::NeedsChanges;
+                task.review.state = ReviewState::ChangesRequested;
+                task.progress.last_event = message.clone();
+                task.progress.next_action = "Dispatch follow-up changes".to_string();
+                task.touch(now);
+                store.save_task(&task)?;
+                store.append_event(&TaskEvent::new(
+                    args.id.clone(),
+                    "changes_requested",
+                    message,
+                    now,
+                ))?;
+                println!("Requested changes for {}", args.id);
+                return Ok(());
+            }
+
+            bail!("review requires --accept or --request-changes <message>");
         }
     }
 }
