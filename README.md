@@ -43,6 +43,7 @@ List active tasks or the human review queue:
 helm-agent task list
 helm-agent task list --review
 helm-agent task list --status blocked --status ready_for_review
+helm-agent task board
 ```
 
 Mark real task state:
@@ -56,3 +57,5 @@ helm-agent task review PM-20260511-001 --request-changes "Add a regression test 
 ## Agent Integrations
 
 See [Main-Agent Integration](docs/agent-integrations/main-agent.md) for rules and command examples for Claude Code, Codex, and other main agents.
+
+Use [Main-Agent Operating Template](docs/agent-integrations/main-agent-template.md) as copyable coordinator instructions for Codex, Claude Code, or project-level agent guidance.

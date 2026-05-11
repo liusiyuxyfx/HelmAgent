@@ -6,6 +6,7 @@ HelmAgent should be the source of truth for delegated coding work. Claude Code, 
 
 - Create a HelmAgent task before delegating work.
 - Run `helm-agent task status <id>` before reporting task state.
+- Run `helm-agent task board` before reporting multi-task state.
 - Use `helm-agent task triage <id>` to record risk, priority, preferred runtime, and review reason before dispatch.
 - Run `helm-agent task dispatch --dry-run --runtime <runtime> <id>` before starting a child agent.
 - Do not claim code-changing work is complete until `task review --accept` has been run. Before that, report it as ready for review once the task is marked ready and the artifacts are presented to the human.
@@ -50,6 +51,7 @@ List active tasks or the human review queue:
 helm-agent task list
 helm-agent task list --review
 helm-agent task list --status blocked --status ready_for_review
+helm-agent task board
 ```
 
 Preview child-agent dispatch before starting anything:
@@ -108,3 +110,5 @@ Review: Inspect artifacts, then run helm-agent task review PM-20260509-101 --acc
 ## Reporting Guidance
 
 Main agents should report HelmAgent state, not memory or assumptions. If `helm-agent task status <id>` says the task is running, report it as running. If the child agent says it is done but the task is not marked ready for review or artifacts have not been presented to the human, report that review handoff is still pending. If the task is ready for review but not accepted, report that implementation is ready for review, not complete.
+
+For copyable coordinator instructions, use [Main-Agent Operating Template](main-agent-template.md).

@@ -1387,3 +1387,24 @@ fn event_rejects_invalid_type() {
         .failure()
         .stderr(contains("invalid value"));
 }
+
+#[test]
+fn main_agent_template_contains_required_operating_commands() {
+    let template = fs::read_to_string("docs/agent-integrations/main-agent-template.md").unwrap();
+
+    for required in [
+        "helm-agent task board",
+        "helm-agent task create",
+        "helm-agent task triage",
+        "helm-agent task dispatch --dry-run",
+        "helm-agent task mark",
+        "task review --accept",
+        "--confirm",
+        "Do not claim code-changing work is complete",
+    ] {
+        assert!(
+            template.contains(required),
+            "missing `{required}` from template:\n{template}"
+        );
+    }
+}
