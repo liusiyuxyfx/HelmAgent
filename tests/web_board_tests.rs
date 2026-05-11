@@ -1,5 +1,6 @@
 use helm_agent::domain::{AgentRuntime, TaskRecord, TaskStatus};
 use helm_agent::store::TaskStore;
+use helm_agent::task_actions::{self, MarkAction, ReviewAction};
 use helm_agent::web_board;
 use tempfile::tempdir;
 use time::{Duration, OffsetDateTime};
@@ -19,15 +20,31 @@ fn task(id: &str, title: &str) -> TaskRecord {
 }
 
 #[test]
-fn empty_board_renders_no_active_tasks_with_refresh() {
+fn empty_board_renders_no_active_tasks_without_meta_refresh() {
     let html = web_board::render_task_board_html_with_refresh(&[], 15);
 
     assert!(html.contains("<!doctype html>"), "{html}");
+    assert!(!html.contains(r#"http-equiv="refresh""#), "{html}");
+    assert!(html.contains("No active tasks"), "{html}");
+}
+
+#[test]
+fn interactive_board_html_contains_action_token_and_app_controls() {
+    let html = web_board::render_task_board_html_with_token(
+        &[task("PM-20260511-021", "Interactive board")],
+        "test-token",
+    );
+
     assert!(
-        html.contains(r#"<meta http-equiv="refresh" content="15">"#),
+        html.contains(r#"<meta name="helm-agent-action-token" content="test-token">"#),
         "{html}"
     );
-    assert!(html.contains("No active tasks"), "{html}");
+    assert!(!html.contains(r#"http-equiv="refresh""#), "{html}");
+    assert!(html.contains("data-helm-board-app"), "{html}");
+    assert!(html.contains("Add Event"), "{html}");
+    assert!(html.contains("Ready For Review"), "{html}");
+    assert!(html.contains("Request Changes"), "{html}");
+    assert!(html.contains("Sync"), "{html}");
 }
 
 #[test]
@@ -68,7 +85,7 @@ fn task_board_text_is_html_escaped() {
         "{html}"
     );
     assert!(html.contains("Last &#39;event&#39;"), "{html}");
-    assert!(!html.contains("<script>"), "{html}");
+    assert!(!html.contains(r#"<script>alert("x")</script>"#), "{html}");
 }
 
 #[test]
@@ -146,6 +163,190 @@ fn forbidden_response_is_no_store_plain_text() {
 }
 
 #[test]
+fn api_tasks_returns_active_tasks_as_json() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let active = task("PM-20260511-031", "API task");
+    let mut archived = task("PM-20260511-032", "Hidden archived task");
+    archived.status = TaskStatus::Archived;
+    store.save_task(&active).unwrap();
+    store.save_task(&archived).unwrap();
+
+    let response = web_board::handle_board_http_request(
+        "GET /api/tasks HTTP/1.1\r\nHost: localhost:8765\r\n\r\n",
+        &store,
+        "token",
+    );
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    assert!(
+        response.contains("Content-Type: application/json; charset=utf-8\r\n"),
+        "{response}"
+    );
+    assert!(response.contains(r#""ok":true"#), "{response}");
+    assert!(response.contains("PM-20260511-031"), "{response}");
+    assert!(!response.contains("PM-20260511-032"), "{response}");
+}
+
+#[test]
+fn api_write_routes_reject_missing_action_token() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-033", "Reject write"))
+        .unwrap();
+    let body = r#"{"event_type":"progress","message":"Should fail"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-033/event HTTP/1.1\r\nHost: localhost:8765\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+        "{response}"
+    );
+    assert!(response.contains("invalid action token"), "{response}");
+}
+
+#[test]
+fn api_event_records_progress_with_valid_token() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-034", "Record via API"))
+        .unwrap();
+    let body = r#"{"event_type":"progress","message":"API progress"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-034/event HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    assert!(response.contains(r#""ok":true"#), "{response}");
+    let updated = store.load_task("PM-20260511-034").unwrap();
+    assert_eq!(updated.progress.last_event, "API progress");
+    let events = store.read_events("PM-20260511-034").unwrap();
+    assert_eq!(events[0].event_type, "progress");
+}
+
+#[test]
+fn api_routes_decode_encoded_task_ids() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM/Space 037", "Encoded id"))
+        .unwrap();
+    let body = r#"{"event_type":"progress","message":"Decoded id works"}"#;
+    let request = format!(
+        "POST /api/tasks/PM%2FSpace%20037/event HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let updated = store.load_task("PM/Space 037").unwrap();
+    assert_eq!(updated.progress.last_event, "Decoded id works");
+}
+
+#[test]
+fn api_mark_blocked_updates_status_and_blocker() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-035", "Mark via API"))
+        .unwrap();
+    let body = r#"{"action":"blocked","message":"Need credentials"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-035/mark HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let updated = store.load_task("PM-20260511-035").unwrap();
+    assert_eq!(updated.status, TaskStatus::Blocked);
+    assert_eq!(
+        updated.progress.blocker.as_deref(),
+        Some("Need credentials")
+    );
+}
+
+#[test]
+fn api_review_accept_finishes_reviewable_task() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = task("PM-20260511-036", "Review via API");
+    task.status = TaskStatus::ReadyForReview;
+    store.save_task(&task).unwrap();
+    let body = r#"{"action":"accept"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-036/review HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let updated = store.load_task("PM-20260511-036").unwrap();
+    assert_eq!(updated.status, TaskStatus::Done);
+}
+
+#[test]
+fn api_review_request_changes_records_change_request() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = task("PM-20260511-038", "Request changes via API");
+    task.status = TaskStatus::ReadyForReview;
+    store.save_task(&task).unwrap();
+    let body = r#"{"action":"request_changes","message":"Add regression test"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-038/review HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let updated = store.load_task("PM-20260511-038").unwrap();
+    assert_eq!(updated.status, TaskStatus::NeedsChanges);
+    assert_eq!(updated.progress.last_event, "Add regression test");
+    assert_eq!(updated.progress.next_action, "Dispatch follow-up changes");
+    let events = store.read_events("PM-20260511-038").unwrap();
+    assert_eq!(events[0].event_type, "changes_requested");
+    assert_eq!(events[0].message, "Add regression test");
+}
+
+#[test]
+fn api_sync_returns_no_session_result_for_unsessioned_task() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-039", "Sync via API"))
+        .unwrap();
+    let request = "POST /api/tasks/PM-20260511-039/sync HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: 2\r\n\r\n{}";
+
+    let response = web_board::handle_board_http_request(request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    assert!(
+        response.contains(r#""result":"PM-20260511-039 no_session""#),
+        "{response}"
+    );
+}
+
+#[test]
 fn loaded_board_tasks_hide_archived_and_sort_newest_first() {
     let home = tempdir().unwrap();
     let store = TaskStore::new(home.path().to_path_buf());
@@ -170,4 +371,80 @@ fn loaded_board_tasks_hide_archived_and_sort_newest_first() {
             .collect::<Vec<_>>(),
         vec!["PM-20260511-002", "PM-20260511-001"]
     );
+}
+
+#[test]
+fn task_action_record_event_updates_last_event_and_appends_log() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = task("PM-20260511-011", "Record event");
+    store.save_task(&task).unwrap();
+
+    let updated = task_actions::record_event(
+        &store,
+        "PM-20260511-011",
+        "progress",
+        "Tests are running",
+        OffsetDateTime::UNIX_EPOCH + Duration::seconds(40),
+    )
+    .unwrap();
+
+    assert_eq!(updated.progress.last_event, "Tests are running");
+    assert_eq!(
+        updated.updated_at,
+        OffsetDateTime::UNIX_EPOCH + Duration::seconds(40)
+    );
+    let events = store.read_events("PM-20260511-011").unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_type, "progress");
+    assert_eq!(events[0].message, "Tests are running");
+}
+
+#[test]
+fn task_action_mark_blocked_sets_blocker_and_status() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = task("PM-20260511-012", "Blocked task");
+    store.save_task(&task).unwrap();
+
+    let updated = task_actions::mark_task(
+        &store,
+        "PM-20260511-012",
+        MarkAction::Blocked,
+        "Waiting for credentials",
+        OffsetDateTime::UNIX_EPOCH + Duration::seconds(50),
+    )
+    .unwrap();
+
+    assert_eq!(updated.status, TaskStatus::Blocked);
+    assert_eq!(
+        updated.progress.blocker.as_deref(),
+        Some("Waiting for credentials")
+    );
+    assert_eq!(updated.progress.next_action, "Resolve blocker");
+    let events = store.read_events("PM-20260511-012").unwrap();
+    assert_eq!(events[0].event_type, "blocked");
+}
+
+#[test]
+fn task_action_review_accept_requires_reviewable_status_and_finishes_task() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = task("PM-20260511-013", "Review task");
+    task.status = TaskStatus::ReadyForReview;
+    store.save_task(&task).unwrap();
+
+    let updated = task_actions::review_task(
+        &store,
+        "PM-20260511-013",
+        ReviewAction::Accept,
+        OffsetDateTime::UNIX_EPOCH + Duration::seconds(60),
+    )
+    .unwrap();
+
+    assert_eq!(updated.status, TaskStatus::Done);
+    assert_eq!(updated.progress.last_event, "Review accepted");
+    assert_eq!(updated.progress.next_action, "Archive task when ready");
+    let events = store.read_events("PM-20260511-013").unwrap();
+    assert_eq!(events[0].event_type, "review_accepted");
 }

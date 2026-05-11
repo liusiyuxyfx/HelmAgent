@@ -230,7 +230,7 @@ fn agent_prompt_prints_runtime_bootstrap_and_template() {
 }
 
 #[test]
-fn board_html_renders_read_only_escaped_task_board() {
+fn board_html_renders_interactive_escaped_task_board() {
     let home = tempdir().unwrap();
 
     helm_agent_with_home(home.path())
@@ -252,8 +252,10 @@ fn board_html_renders_read_only_escaped_task_board() {
         .assert()
         .success()
         .stdout(contains("<!doctype html>"))
+        .stdout(contains("data-helm-board-app"))
+        .stdout(contains("helm-agent-action-token"))
         .stdout(contains("Render &lt;board&gt; safely"))
-        .stdout(contains("No write actions are available"));
+        .stdout(contains("Add Event"));
 }
 
 #[test]

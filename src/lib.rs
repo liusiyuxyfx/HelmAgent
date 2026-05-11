@@ -8,4 +8,5 @@ pub mod output;
 pub mod paths;
 pub mod policy;
 pub mod store;
+pub mod task_actions;
 pub mod web_board;

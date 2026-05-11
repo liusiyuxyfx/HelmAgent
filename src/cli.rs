@@ -1,11 +1,12 @@
 use crate::brief;
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
-use crate::launcher::{DispatchPlan, Launcher, TmuxSessionState};
+use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
 use crate::paths::canonical_helm_agent_home;
 use crate::policy::{DispatchDecision, PolicyInput};
 use crate::store::TaskStore;
+use crate::task_actions::{self, MarkAction, ReviewAction};
 use crate::web_board;
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
@@ -418,7 +419,7 @@ fn handle_task_sync(args: SyncArgs, store: &TaskStore) -> Result<()> {
     match (args.id, args.all) {
         (Some(id), false) => {
             let task = store.load_task(&id)?;
-            println!("{}", sync_task(task, store, &launcher)?);
+            println!("{}", task_actions::sync_task(task, store, &launcher)?);
             Ok(())
         }
         (None, true) => {
@@ -435,73 +436,12 @@ fn handle_task_sync(args: SyncArgs, store: &TaskStore) -> Result<()> {
             }
 
             for task in tasks {
-                println!("{}", sync_task(task, store, &launcher)?);
+                println!("{}", task_actions::sync_task(task, store, &launcher)?);
             }
             Ok(())
         }
         (None, false) => bail!("sync requires exactly one target: <id> or --all"),
         (Some(_), true) => bail!("sync accepts either <id> or --all"),
-    }
-}
-
-fn sync_task(mut task: TaskRecord, store: &TaskStore, launcher: &Launcher) -> Result<String> {
-    if matches!(task.status, TaskStatus::Done | TaskStatus::Archived) {
-        return Ok(format!("{} skipped {}", task.id, task.status.as_str()));
-    }
-
-    let now = OffsetDateTime::now_utc();
-    let Some(session) = task.assignment.tmux_session.clone() else {
-        return Ok(format!("{} no_session", task.id));
-    };
-
-    match launcher.session_state(&session)? {
-        TmuxSessionState::Alive => {
-            if matches!(
-                task.status,
-                TaskStatus::Queued | TaskStatus::Running | TaskStatus::Blocked
-            ) {
-                task.status = TaskStatus::Running;
-                if task
-                    .progress
-                    .blocker
-                    .as_deref()
-                    .is_some_and(|blocker| blocker.starts_with("tmux session missing:"))
-                {
-                    task.progress.blocker = None;
-                }
-                task.progress.last_event = format!("tmux session alive: {session}");
-                task.progress.next_action =
-                    "Inspect child agent session or wait for review handoff".to_string();
-                task.touch(now);
-                store.save_task(&task)?;
-                store.append_event(&TaskEvent::new(
-                    task.id.clone(),
-                    "sync_alive",
-                    format!("tmux session alive: {session}"),
-                    now,
-                ))?;
-            }
-            Ok(format!("{} alive {}", task.id, session))
-        }
-        TmuxSessionState::Missing => {
-            if matches!(task.status, TaskStatus::Running | TaskStatus::Blocked) {
-                let message = format!("tmux session missing: {session}");
-                task.status = TaskStatus::Blocked;
-                task.progress.blocker = Some(message.clone());
-                task.progress.last_event = message.clone();
-                task.progress.next_action =
-                    "Restart dispatch or inspect the task manually".to_string();
-                task.touch(now);
-                store.save_task(&task)?;
-                store.append_event(&TaskEvent::new(
-                    task.id.clone(),
-                    "sync_missing",
-                    format!("tmux session missing: {session}"),
-                    now,
-                ))?;
-            }
-            Ok(format!("{} missing {}", task.id, session))
-        }
     }
 }
 
@@ -796,37 +736,18 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
         }
         TaskSubcommand::Mark(args) => {
             let now = OffsetDateTime::now_utc();
-            let mut task = store.load_task(&args.id)?;
-            let (status, event_type, next_action) = if args.ready_for_review {
-                task.review.state = ReviewState::Required;
-                task.progress.blocker = None;
-                (
-                    TaskStatus::ReadyForReview,
-                    "ready_for_review",
-                    "Human review required",
-                )
+            let action = if args.ready_for_review {
+                MarkAction::ReadyForReview
             } else if args.blocked {
-                task.progress.blocker = Some(args.message.clone());
-                (TaskStatus::Blocked, "blocked", "Resolve blocker")
+                MarkAction::Blocked
             } else if args.triaged {
-                task.progress.blocker = None;
-                (TaskStatus::Triaged, "triaged", "Dispatch or defer task")
+                MarkAction::Triaged
             } else {
                 bail!("mark requires --ready-for-review, --blocked, or --triaged");
             };
 
-            task.status = status;
-            task.progress.last_event = args.message.clone();
-            task.progress.next_action = next_action.to_string();
-            task.touch(now);
-            store.save_task(&task)?;
-            store.append_event(&TaskEvent::new(
-                args.id.clone(),
-                event_type,
-                args.message,
-                now,
-            ))?;
-            println!("Marked {} {}", args.id, status.as_str());
+            let task = task_actions::mark_task(store, &args.id, action, args.message, now)?;
+            println!("Marked {} {}", args.id, task.status.as_str());
             Ok(())
         }
         TaskSubcommand::Triage(args) => {
@@ -881,70 +802,27 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
         }
         TaskSubcommand::Event(args) => {
             let now = OffsetDateTime::now_utc();
-            let mut task = store.load_task(&args.id)?;
-            task.progress.last_event = args.message.clone();
-            task.touch(now);
-            store.save_task(&task)?;
-            store.append_event(&TaskEvent::new(
-                args.id.clone(),
-                args.event_type.as_str(),
-                args.message,
-                now,
-            ))?;
+            let event_type = args.event_type.as_str();
+            task_actions::record_event(store, &args.id, event_type, args.message, now)?;
             println!("Recorded {} for {}", args.event_type.as_str(), args.id);
             Ok(())
         }
         TaskSubcommand::Review(args) => {
             let now = OffsetDateTime::now_utc();
-            let mut task = store.load_task(&args.id)?;
-            if !args.accept && args.request_changes.is_none() {
+            let (action, accepted) = if args.accept {
+                (ReviewAction::Accept, true)
+            } else if let Some(message) = args.request_changes {
+                (ReviewAction::RequestChanges(message), false)
+            } else {
                 bail!("review requires --accept or --request-changes <message>");
-            }
-            if !matches!(
-                task.status,
-                TaskStatus::ReadyForReview | TaskStatus::Reviewing
-            ) {
-                bail!(
-                    "cannot review {} with status {}",
-                    args.id,
-                    task.status.as_str()
-                );
-            }
+            };
 
-            if args.accept {
-                task.status = TaskStatus::Done;
-                task.review.state = ReviewState::Accepted;
-                task.progress.last_event = "Review accepted".to_string();
-                task.progress.next_action = "Archive task when ready".to_string();
-                task.touch(now);
-                store.save_task(&task)?;
-                store.append_event(&TaskEvent::new(
-                    args.id.clone(),
-                    "review_accepted",
-                    "Review accepted".to_string(),
-                    now,
-                ))?;
+            task_actions::review_task(store, &args.id, action, now)?;
+            if accepted {
                 println!("Accepted {}", args.id);
-                return Ok(());
-            }
-
-            if let Some(message) = args.request_changes {
-                task.status = TaskStatus::NeedsChanges;
-                task.review.state = ReviewState::ChangesRequested;
-                task.progress.last_event = message.clone();
-                task.progress.next_action = "Dispatch follow-up changes".to_string();
-                task.touch(now);
-                store.save_task(&task)?;
-                store.append_event(&TaskEvent::new(
-                    args.id.clone(),
-                    "changes_requested",
-                    message,
-                    now,
-                ))?;
+            } else {
                 println!("Requested changes for {}", args.id);
-                return Ok(());
             }
-
             Ok(())
         }
     }
