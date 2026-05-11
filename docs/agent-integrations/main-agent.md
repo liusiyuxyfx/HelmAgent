@@ -6,8 +6,9 @@ HelmAgent should be the source of truth for delegated coding work. Claude Code, 
 
 - Create a HelmAgent task before delegating work.
 - Run `helm-agent task status <id>` before reporting task state.
+- Use `helm-agent task triage <id>` to record risk, priority, preferred runtime, and review reason before dispatch.
 - Run `helm-agent task dispatch --dry-run --runtime <runtime> <id>` before starting a child agent.
-- Do not claim code-changing work is complete until you have recorded a review signal and presented the artifacts to the human.
+- Do not claim code-changing work is complete until the task is marked ready for review and the artifacts are presented to the human.
 - Only the human or an explicitly authorized main agent should run `helm-agent task review --accept` or `helm-agent task review --request-changes`.
 - Show attach and resume commands whenever work is delegated or recovered.
 - Ask before using Codex unless the user has already approved it for the task or workspace.
@@ -22,15 +23,34 @@ Create a task:
 helm-agent task create --id PM-20260509-101 --title "Add retry tests" --project .
 ```
 
-Record progress, a blocker signal, or a ready_for_review signal:
+Triage the task before dispatch:
+
+```bash
+helm-agent task triage PM-20260509-101 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
+```
+
+Record progress notes:
 
 ```bash
 helm-agent task event PM-20260509-101 --type progress --message "Created the failing regression test"
-helm-agent task event PM-20260509-101 --type blocked --message "Waiting for API contract confirmation"
-helm-agent task event PM-20260509-101 --type ready_for_review --message "Implementation and tests are ready"
 ```
 
-`task event` records signals and notes only. In V1, `--type blocked` and `--type ready_for_review` do not change the task status to blocked or ready for review.
+Use `task event` for notes only. Use `task mark` when the task state should change.
+
+Mark a blocker or ready-for-review state:
+
+```bash
+helm-agent task mark PM-20260509-101 --blocked --message "Waiting for API contract confirmation"
+helm-agent task mark PM-20260509-101 --ready-for-review --message "Implementation and tests are ready"
+```
+
+List active tasks or the human review queue:
+
+```bash
+helm-agent task list
+helm-agent task list --review
+helm-agent task list --status blocked --status ready_for_review
+```
 
 Preview child-agent dispatch before starting anything:
 
@@ -79,7 +99,7 @@ If a workspace uses a non-default tmux binary, set `HELM_AGENT_TMUX_BIN` before 
 Task: PM-20260509-101 - Add retry tests
 Runtime: claude
 Reason: Small isolated test and implementation task
-Status: queued
+Status: ready_for_review
 Attach: tmux attach -t helm-agent-PM-20260509-101-claude
 Resume: claude --resume <session-id>
 Review: Human review required; suggested command: helm-agent task review PM-20260509-101 --accept
