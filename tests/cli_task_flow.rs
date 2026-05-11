@@ -590,6 +590,84 @@ fn dispatch_rejects_done_and_archived_tasks() {
 }
 
 #[test]
+fn dispatch_gate_rejects_handoff_and_paused_states_but_allows_needs_changes() {
+    let home = tempdir().unwrap();
+    let blocked_statuses = [
+        (TaskStatus::ReadyForReview, "ready_for_review"),
+        (TaskStatus::Reviewing, "reviewing"),
+        (TaskStatus::Blocked, "blocked"),
+        (TaskStatus::WaitingUser, "waiting_user"),
+    ];
+    let store = TaskStore::new(home.path().to_path_buf());
+
+    for (index, (status, status_name)) in blocked_statuses.into_iter().enumerate() {
+        let id = format!("PM-20260509-GATE-{index}");
+        helm_agent_with_home(home.path())
+            .args([
+                "task",
+                "create",
+                "--id",
+                id.as_str(),
+                "--title",
+                "Dispatch gate task",
+                "--project",
+                "/repo/project",
+            ])
+            .assert()
+            .success();
+
+        let mut task = store.load_task(&id).unwrap();
+        task.status = status;
+        store.save_task(&task).unwrap();
+
+        helm_agent_with_home(home.path())
+            .args([
+                "task",
+                "dispatch",
+                id.as_str(),
+                "--runtime",
+                "claude",
+                "--dry-run",
+            ])
+            .assert()
+            .failure()
+            .stderr(contains(format!(
+                "cannot dispatch {id} with status {status_name}"
+            )));
+    }
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-GATE-OK",
+            "--title",
+            "Needs changes follow-up",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+    let mut task = store.load_task("PM-20260509-GATE-OK").unwrap();
+    task.status = TaskStatus::NeedsChanges;
+    store.save_task(&task).unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-GATE-OK",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Dry-run dispatch PM-20260509-GATE-OK"));
+}
+
+#[test]
 fn list_tasks_shows_active_tasks_newest_first() {
     let home = tempdir().unwrap();
 
