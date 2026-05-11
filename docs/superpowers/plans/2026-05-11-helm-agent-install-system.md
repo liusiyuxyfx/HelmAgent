@@ -30,6 +30,7 @@ Create `tests/install_script_tests.rs` with tests that run `sh install.sh ... --
 - doctor
 - uninstall
 - uninstall `--purge`
+- unsafe purge refusal
 - init-project
 - unknown command
 

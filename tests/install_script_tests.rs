@@ -43,6 +43,7 @@ fn update_dry_run_reinstalls_without_data_deletion() {
 
     assert!(success, "{stdout}\n{stderr}");
     assert!(stdout.contains("cargo install --git"), "{stdout}");
+    assert!(stdout.contains("install template"), "{stdout}");
     assert!(!stdout.contains("remove data"), "{stdout}");
 }
 
@@ -73,6 +74,19 @@ fn uninstall_purge_dry_run_reports_data_removal() {
     assert!(success, "{stdout}\n{stderr}");
     assert!(stdout.contains("cargo uninstall helm-agent"), "{stdout}");
     assert!(stdout.contains("remove data"), "{stdout}");
+}
+
+#[test]
+fn uninstall_purge_refuses_unsafe_home_before_mutation() {
+    let (success, stdout, stderr) =
+        run_install_script_with_env(&["uninstall", "--purge"], &[("HELM_AGENT_HOME", "/")]);
+
+    assert!(!success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("refusing to purge unsafe HELM_AGENT_HOME"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("cargo uninstall helm-agent"), "{stdout}");
 }
 
 #[test]

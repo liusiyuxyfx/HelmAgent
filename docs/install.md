@@ -35,7 +35,7 @@ sh ./install.sh update
 make update
 ```
 
-Update reinstalls the binary with `cargo install --git ... --locked --force`. It does not remove task data.
+Update refreshes the installed main-agent template and reinstalls the binary with `cargo install --git ... --locked --force`. It does not remove task data.
 
 ## Repair
 
@@ -99,6 +99,8 @@ make uninstall-purge
 ```
 
 Plain uninstall keeps `$HOME/.helm-agent` so task records are not deleted by accident. Use `--purge` only when you intentionally want to delete HelmAgent task data.
+
+`--purge` refuses unsafe values such as `/`, `.`, `..`, and `$HOME`.
 
 ## Project Setup
 

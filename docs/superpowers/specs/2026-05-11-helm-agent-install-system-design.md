@@ -78,6 +78,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 
 ### `update`
 
+- Ensure `$HELM_AGENT_HOME` exists.
+- Refresh `$HELM_AGENT_HOME/main-agent-template.md`.
 - Run cargo install with `--force`.
 - Do not modify task data.
 - Re-run `helm-agent --help` when the binary is available.
@@ -101,6 +103,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 - Run `cargo uninstall helm-agent`.
 - Keep `$HELM_AGENT_HOME` by default.
 - With `--purge`, remove `$HELM_AGENT_HOME`.
+- Refuse unsafe purge paths such as `/`, `.`, `..`, and `$HOME`.
 
 ### `init-project <path>`
 

@@ -109,10 +109,14 @@ write_env() {
     if [ "$DRY_RUN" -eq 0 ]; then
         mkdir -p "$HELM_AGENT_HOME"
         {
-            printf 'export HELM_AGENT_HOME="%s"\n' "$HELM_AGENT_HOME"
-            printf 'export PATH="%s:$PATH"\n' "$HELM_AGENT_BIN_DIR"
+            printf 'export HELM_AGENT_HOME="%s"\n' "$(escape_double_quoted "$HELM_AGENT_HOME")"
+            printf 'export PATH="%s:$PATH"\n' "$(escape_double_quoted "$HELM_AGENT_BIN_DIR")"
         } > "$HELM_AGENT_ENV_FILE"
     fi
+}
+
+escape_double_quoted() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\$/\\$/g; s/`/\\`/g'
 }
 
 cargo_install() {
@@ -123,6 +127,11 @@ cargo_uninstall() {
     if [ "$DRY_RUN" -eq 1 ]; then
         plan "cargo uninstall helm-agent"
         return 0
+    fi
+
+    if ! have cargo; then
+        log "missing: cargo is required to uninstall helm-agent"
+        exit 1
     fi
 
     if cargo install --list | grep -q '^helm-agent '; then
@@ -197,8 +206,19 @@ install_cmd() {
 
 update_cmd() {
     require_tools
+    ensure_home
+    install_template
     cargo_install
     run_help_check
+}
+
+assert_safe_purge_path() {
+    case "$HELM_AGENT_HOME" in
+        "" | "/" | "." | ".." | "$HOME" | "$HOME/")
+            log "refusing to purge unsafe HELM_AGENT_HOME: $HELM_AGENT_HOME"
+            exit 1
+            ;;
+    esac
 }
 
 path_contains_bin_dir() {
@@ -287,6 +307,10 @@ repair_cmd() {
 }
 
 uninstall_cmd() {
+    if [ "$PURGE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+        assert_safe_purge_path
+    fi
+
     cargo_uninstall
     if [ "$PURGE" -eq 1 ]; then
         plan "remove data $HELM_AGENT_HOME"
