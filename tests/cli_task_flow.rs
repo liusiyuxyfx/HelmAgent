@@ -704,6 +704,13 @@ fn sync_queued_dry_run_keeps_missing_session_queued() {
     let task = store.load_task("PM-20260511-S002").unwrap();
     assert_eq!(task.status, TaskStatus::Queued);
     assert_eq!(task.progress.blocker, None);
+    let events = store.read_events("PM-20260511-S002").unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "sync_missing"),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -851,6 +858,79 @@ fn sync_alive_preserves_non_tmux_blocker() {
         task.progress.blocker.as_deref(),
         Some("Waiting for product decision")
     );
+}
+
+#[test]
+fn sync_alive_does_not_reopen_ready_for_review_task() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_has_session_script(&tmux_bin, &record_path, 0);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S007",
+            "--title",
+            "Ready task with live tmux",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = store.load_task("PM-20260511-S007").unwrap();
+    task.status = TaskStatus::ReadyForReview;
+    task.assignment.tmux_session = Some("helm-agent-PM-20260511-S007-claude".to_string());
+    task.progress.last_event = "Ready for review".to_string();
+    store.save_task(&task).unwrap();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "sync", "PM-20260511-S007"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "PM-20260511-S007 alive helm-agent-PM-20260511-S007-claude",
+        ));
+
+    let task = store.load_task("PM-20260511-S007").unwrap();
+    assert_eq!(task.status, TaskStatus::ReadyForReview);
+    assert_eq!(task.progress.last_event, "Ready for review");
+    let events = store.read_events("PM-20260511-S007").unwrap();
+    assert!(
+        !events.iter().any(|event| event.event_type == "sync_alive"),
+        "{events:?}"
+    );
+
+    helm_agent_with_home(home.path())
+        .args(["task", "review", "PM-20260511-S007", "--accept"])
+        .assert()
+        .success()
+        .stdout(contains("Accepted PM-20260511-S007"));
+}
+
+#[test]
+fn sync_help_and_missing_target_explain_target_modes() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "sync", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Sync recorded tmux session health"))
+        .stdout(contains("Task id to sync"))
+        .stdout(contains("Sync every active task"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "sync"])
+        .assert()
+        .failure()
+        .stderr(contains("sync requires exactly one target: <id> or --all"));
 }
 
 #[test]
@@ -1863,6 +1943,7 @@ fn main_agent_template_contains_required_operating_commands() {
         "helm-agent task board",
         "helm-agent task create",
         "helm-agent task triage",
+        "helm-agent task sync",
         "helm-agent task dispatch --dry-run",
         "helm-agent task mark",
         "task review --accept",
@@ -1872,6 +1953,24 @@ fn main_agent_template_contains_required_operating_commands() {
         assert!(
             template.contains(required),
             "missing `{required}` from template:\n{template}"
+        );
+    }
+}
+
+#[test]
+fn docs_cover_tmux_sync_commands() {
+    let readme = fs::read_to_string("README.md").unwrap();
+    let guide = fs::read_to_string("docs/agent-integrations/main-agent.md").unwrap();
+    let combined = format!("{readme}\n{guide}");
+
+    for required in [
+        "helm-agent task sync PM-20260511-001",
+        "helm-agent task sync --all",
+        "before reporting delegated session health",
+    ] {
+        assert!(
+            combined.contains(required),
+            "missing `{required}` from docs:\n{combined}"
         );
     }
 }

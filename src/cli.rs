@@ -133,8 +133,13 @@ struct ResumeArgs {
 }
 
 #[derive(Debug, Args)]
+#[command(
+    about = "Sync recorded tmux session health for one task or all active session-backed tasks"
+)]
 struct SyncArgs {
+    /// Task id to sync. Use --all instead to sync every active task with a recorded tmux session.
     id: Option<String>,
+    /// Sync every active task that has a recorded tmux session.
     #[arg(long, conflicts_with = "id")]
     all: bool,
 }
@@ -414,7 +419,7 @@ fn handle_task_sync(args: SyncArgs, store: &TaskStore) -> Result<()> {
             }
             Ok(())
         }
-        (None, false) => bail!("sync requires <id> or --all"),
+        (None, false) => bail!("sync requires exactly one target: <id> or --all"),
         (Some(_), true) => bail!("sync accepts either <id> or --all"),
     }
 }
@@ -431,26 +436,31 @@ fn sync_task(mut task: TaskRecord, store: &TaskStore, launcher: &Launcher) -> Re
 
     match launcher.session_state(&session)? {
         TmuxSessionState::Alive => {
-            task.status = TaskStatus::Running;
-            if task
-                .progress
-                .blocker
-                .as_deref()
-                .is_some_and(|blocker| blocker.starts_with("tmux session missing:"))
-            {
-                task.progress.blocker = None;
+            if matches!(
+                task.status,
+                TaskStatus::Queued | TaskStatus::Running | TaskStatus::Blocked
+            ) {
+                task.status = TaskStatus::Running;
+                if task
+                    .progress
+                    .blocker
+                    .as_deref()
+                    .is_some_and(|blocker| blocker.starts_with("tmux session missing:"))
+                {
+                    task.progress.blocker = None;
+                }
+                task.progress.last_event = format!("tmux session alive: {session}");
+                task.progress.next_action =
+                    "Inspect child agent session or wait for review handoff".to_string();
+                task.touch(now);
+                store.save_task(&task)?;
+                store.append_event(&TaskEvent::new(
+                    task.id.clone(),
+                    "sync_alive",
+                    format!("tmux session alive: {session}"),
+                    now,
+                ))?;
             }
-            task.progress.last_event = format!("tmux session alive: {session}");
-            task.progress.next_action =
-                "Inspect child agent session or wait for review handoff".to_string();
-            task.touch(now);
-            store.save_task(&task)?;
-            store.append_event(&TaskEvent::new(
-                task.id.clone(),
-                "sync_alive",
-                format!("tmux session alive: {session}"),
-                now,
-            ))?;
             Ok(format!("{} alive {}", task.id, session))
         }
         TmuxSessionState::Missing => {
@@ -463,13 +473,13 @@ fn sync_task(mut task: TaskRecord, store: &TaskStore, launcher: &Launcher) -> Re
                     "Restart dispatch or inspect the task manually".to_string();
                 task.touch(now);
                 store.save_task(&task)?;
+                store.append_event(&TaskEvent::new(
+                    task.id.clone(),
+                    "sync_missing",
+                    format!("tmux session missing: {session}"),
+                    now,
+                ))?;
             }
-            store.append_event(&TaskEvent::new(
-                task.id.clone(),
-                "sync_missing",
-                format!("tmux session missing: {session}"),
-                now,
-            ))?;
             Ok(format!("{} missing {}", task.id, session))
         }
     }
