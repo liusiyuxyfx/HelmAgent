@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use helm_agent::domain::{AgentRuntime, RiskLevel, TaskStatus};
+use helm_agent::domain::{AgentRuntime, ReviewState, RiskLevel, TaskStatus};
 use helm_agent::store::TaskStore;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::{contains, is_empty};
@@ -141,6 +141,18 @@ fn review_accept_and_request_changes_update_status() {
         .success();
 
     helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260509-002",
+            "--ready-for-review",
+            "--message",
+            "Ready for review",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
         .args(["task", "review", "PM-20260509-002", "--accept"])
         .assert()
         .success()
@@ -155,17 +167,42 @@ fn review_accept_and_request_changes_update_status() {
     helm_agent_with_home(home.path())
         .args([
             "task",
+            "create",
+            "--id",
+            "PM-20260509-012",
+            "--title",
+            "Review follow-up patch",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260509-012",
+            "--ready-for-review",
+            "--message",
+            "Ready for review",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
             "review",
-            "PM-20260509-002",
+            "PM-20260509-012",
             "--request-changes",
             "Add regression test",
         ])
         .assert()
         .success()
-        .stdout(contains("Requested changes for PM-20260509-002"));
+        .stdout(contains("Requested changes for PM-20260509-012"));
 
     helm_agent_with_home(home.path())
-        .args(["task", "status", "PM-20260509-002"])
+        .args(["task", "status", "PM-20260509-012"])
         .assert()
         .success()
         .stdout(contains("[needs_changes]"))
@@ -473,6 +510,86 @@ fn medium_risk_dispatch_requires_confirmation_before_tmux_launch() {
 }
 
 #[test]
+fn dispatch_rejects_done_and_archived_tasks() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-013",
+            "--title",
+            "Completed task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260509-013",
+            "--ready-for-review",
+            "--message",
+            "Ready",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args(["task", "review", "PM-20260509-013", "--accept"])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-013",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot dispatch PM-20260509-013 with status done"));
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-014",
+            "--title",
+            "Archived task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut archived = store.load_task("PM-20260509-014").unwrap();
+    archived.status = TaskStatus::Archived;
+    store.save_task(&archived).unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260509-014",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "cannot dispatch PM-20260509-014 with status archived",
+        ));
+}
+
+#[test]
 fn list_tasks_shows_active_tasks_newest_first() {
     let home = tempdir().unwrap();
 
@@ -631,7 +748,14 @@ fn review_queue_includes_triaged_tasks_that_require_human_attention() {
         .assert()
         .success()
         .stdout(contains("PM-20260511-009"))
-        .stdout(contains("triaged"));
+        .stdout(contains("triaged"))
+        .stdout(contains("Touches auth flow"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260511-009"])
+        .assert()
+        .success()
+        .stdout(contains("Review: Touches auth flow"));
 }
 
 #[test]
@@ -817,6 +941,79 @@ fn triage_sets_risk_priority_runtime_and_review_reason() {
 }
 
 #[test]
+fn triage_low_clears_review_requirement_only_without_review_reason() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-015",
+            "--title",
+            "Downgrade risk",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args(["task", "triage", "PM-20260511-015", "--risk", "medium"])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args(["task", "triage", "PM-20260511-015", "--risk", "low"])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-015").unwrap();
+    assert_eq!(task.risk, RiskLevel::Low);
+    assert_eq!(task.review.state, ReviewState::NotRequired);
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list", "--review"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("PM-20260511-015").not());
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-016",
+            "--title",
+            "Keep review reason",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "triage",
+            "PM-20260511-016",
+            "--risk",
+            "medium",
+            "--review-reason",
+            "Touches auth flow",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args(["task", "triage", "PM-20260511-016", "--risk", "low"])
+        .assert()
+        .success();
+
+    let task = store.load_task("PM-20260511-016").unwrap();
+    assert_eq!(task.risk, RiskLevel::Low);
+    assert_eq!(task.review.state, ReviewState::Required);
+    assert_eq!(task.review.reason.as_deref(), Some("Touches auth flow"));
+}
+
+#[test]
 fn triage_requires_at_least_one_change() {
     let home = tempdir().unwrap();
 
@@ -865,6 +1062,57 @@ fn review_requires_accept_or_request_changes() {
         .failure()
         .stderr(contains(
             "review requires --accept or --request-changes <message>",
+        ));
+}
+
+#[test]
+fn review_rejects_tasks_that_are_not_ready_for_review() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260509-015",
+            "--title",
+            "Not ready",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "review", "PM-20260509-015", "--accept"])
+        .assert()
+        .failure()
+        .stderr(contains("cannot review PM-20260509-015 with status inbox"));
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "triage",
+            "PM-20260509-015",
+            "--risk",
+            "medium",
+            "--review-reason",
+            "Needs human attention before dispatch",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "review",
+            "PM-20260509-015",
+            "--request-changes",
+            "No implementation exists yet",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "cannot review PM-20260509-015 with status triaged",
         ));
 }
 

@@ -72,7 +72,7 @@ Show recovery commands:
 helm-agent task resume PM-20260509-101
 ```
 
-Human or authorized reviewer commands:
+Human or authorized reviewer commands, after the task is ready for review:
 
 ```bash
 helm-agent task review PM-20260509-101 --accept

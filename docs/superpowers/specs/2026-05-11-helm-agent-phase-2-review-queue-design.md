@@ -69,6 +69,7 @@ Output columns:
 - title
 - last_event
 - next_action
+- review_reason
 
 ### `task mark`
 
@@ -101,7 +102,14 @@ Rules:
 - `--runtime` accepts `claude`, `codex`, `opencode`.
 - `--review-reason` sets `review.reason` and `review.state = required`.
 - When risk is set to `medium` or `high`, `review.state = required`.
+- When risk is set to `low`, `review.state` is cleared to `not_required` only if no review reason is present.
 - Triage appends a `triaged` event summarizing changed fields.
+
+### Review and Dispatch Gates
+
+- `task review --accept` and `task review --request-changes` require `status = ready_for_review` or `status = reviewing`.
+- `task dispatch` only starts or plans work from `inbox`, `triaged`, `queued`, or `needs_changes`.
+- `done`, `archived`, `ready_for_review`, `reviewing`, `blocked`, and `waiting_user` tasks must not be dispatched.
 
 ## Data Model
 

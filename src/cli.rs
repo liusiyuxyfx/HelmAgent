@@ -302,6 +302,20 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
         TaskSubcommand::Dispatch(args) => {
             let now = OffsetDateTime::now_utc();
             let mut task = store.load_task(&args.id)?;
+            if !matches!(
+                task.status,
+                TaskStatus::Inbox
+                    | TaskStatus::Triaged
+                    | TaskStatus::Queued
+                    | TaskStatus::NeedsChanges
+            ) {
+                bail!(
+                    "cannot dispatch {} with status {}",
+                    args.id,
+                    task.status.as_str()
+                );
+            }
+
             let runtime = AgentRuntime::from(args.runtime);
             let dispatch = DispatchPlan {
                 task_id: args.id.clone(),
@@ -432,6 +446,8 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 changed.push(format!("risk={}", task.risk.as_str()));
                 if task.risk != RiskLevel::Low {
                     task.review.state = ReviewState::Required;
+                } else if task.review.reason.is_none() && args.review_reason.is_none() {
+                    task.review.state = ReviewState::NotRequired;
                 }
             }
 
@@ -480,6 +496,19 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
         TaskSubcommand::Review(args) => {
             let now = OffsetDateTime::now_utc();
             let mut task = store.load_task(&args.id)?;
+            if !args.accept && args.request_changes.is_none() {
+                bail!("review requires --accept or --request-changes <message>");
+            }
+            if !matches!(
+                task.status,
+                TaskStatus::ReadyForReview | TaskStatus::Reviewing
+            ) {
+                bail!(
+                    "cannot review {} with status {}",
+                    args.id,
+                    task.status.as_str()
+                );
+            }
 
             if args.accept {
                 task.status = TaskStatus::Done;
@@ -515,7 +544,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 return Ok(());
             }
 
-            bail!("review requires --accept or --request-changes <message>");
+            Ok(())
         }
     }
 }
