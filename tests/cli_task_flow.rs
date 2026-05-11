@@ -668,6 +668,127 @@ fn dispatch_gate_rejects_handoff_and_paused_states_but_allows_needs_changes() {
 }
 
 #[test]
+fn board_groups_tasks_for_human_review() {
+    let home = tempdir().unwrap();
+
+    for (id, title) in [
+        ("PM-20260511-B001", "Inbox task"),
+        ("PM-20260511-B002", "Running task"),
+        ("PM-20260511-B003", "Blocked task"),
+        ("PM-20260511-B004", "Review task"),
+        ("PM-20260511-B005", "Done task"),
+        ("PM-20260511-B006", "Archived task"),
+    ] {
+        helm_agent_with_home(home.path())
+            .args([
+                "task",
+                "create",
+                "--id",
+                id,
+                "--title",
+                title,
+                "--project",
+                "/repo",
+            ])
+            .assert()
+            .success();
+    }
+
+    let store = TaskStore::new(home.path().to_path_buf());
+
+    let mut running = store.load_task("PM-20260511-B002").unwrap();
+    running.status = TaskStatus::Running;
+    running.progress.last_event = "Child agent is editing files".to_string();
+    running.progress.next_action = "Check child progress".to_string();
+    store.save_task(&running).unwrap();
+
+    let mut blocked = store.load_task("PM-20260511-B003").unwrap();
+    blocked.status = TaskStatus::Blocked;
+    blocked.progress.blocker = Some("Waiting for API contract".to_string());
+    blocked.progress.last_event = "Blocked by API contract".to_string();
+    blocked.progress.next_action = "Resolve blocker".to_string();
+    store.save_task(&blocked).unwrap();
+
+    let mut review = store.load_task("PM-20260511-B004").unwrap();
+    review.status = TaskStatus::Triaged;
+    review.risk = RiskLevel::Medium;
+    review.review.state = ReviewState::Required;
+    review.review.reason = Some("Touches auth flow".to_string());
+    review.progress.last_event = "Triaged risk=medium, review_reason=set".to_string();
+    review.progress.next_action = "Dispatch or defer task".to_string();
+    store.save_task(&review).unwrap();
+
+    let mut done = store.load_task("PM-20260511-B005").unwrap();
+    done.status = TaskStatus::Done;
+    done.progress.last_event = "Review accepted".to_string();
+    done.progress.next_action = "Archive task when ready".to_string();
+    store.save_task(&done).unwrap();
+
+    let mut archived = store.load_task("PM-20260511-B006").unwrap();
+    archived.status = TaskStatus::Archived;
+    store.save_task(&archived).unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "board"])
+        .assert()
+        .success()
+        .stdout(contains("Inbox"))
+        .stdout(contains("PM-20260511-B001"))
+        .stdout(contains("Running"))
+        .stdout(contains("PM-20260511-B002"))
+        .stdout(contains("Blocked"))
+        .stdout(contains("PM-20260511-B003"))
+        .stdout(contains("blocker: Waiting for API contract"))
+        .stdout(contains("Review"))
+        .stdout(contains("PM-20260511-B004"))
+        .stdout(contains("review: Touches auth flow"))
+        .stdout(contains("Done"))
+        .stdout(contains("PM-20260511-B005"))
+        .stdout(predicates::str::contains("PM-20260511-B006").not());
+}
+
+#[test]
+fn board_includes_recovery_context_after_dispatch_preview() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-B007",
+            "--title",
+            "Recover delegated task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-B007",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "board"])
+        .assert()
+        .success()
+        .stdout(contains("Queued"))
+        .stdout(contains("PM-20260511-B007"))
+        .stdout(contains(
+            "attach: tmux attach -t helm-agent-PM-20260511-B007-claude",
+        ))
+        .stdout(contains("resume: claude --resume <session-id>"));
+}
+
+#[test]
 fn list_tasks_shows_active_tasks_newest_first() {
     let home = tempdir().unwrap();
 

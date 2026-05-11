@@ -31,6 +31,7 @@ struct TaskCommand {
 #[derive(Debug, Subcommand)]
 enum TaskSubcommand {
     List(ListArgs),
+    Board,
     Create(CreateArgs),
     Status(StatusArgs),
     Resume(ResumeArgs),
@@ -269,6 +270,13 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
 
             tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
             print!("{}", output::task_list(&tasks));
+            Ok(())
+        }
+        TaskSubcommand::Board => {
+            let mut tasks = store.list_tasks()?;
+            tasks.retain(|task| task.status != TaskStatus::Archived);
+            tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            print!("{}", output::task_board(&tasks));
             Ok(())
         }
         TaskSubcommand::Create(args) => {
