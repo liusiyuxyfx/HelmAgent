@@ -2,6 +2,43 @@
 
 HelmAgent is a local coordination CLI for coding agents with task records, tmux sessions, recovery commands, and review checkpoints.
 
+## Install
+
+Install from GitHub:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- install
+```
+
+Update, repair, diagnose, and uninstall:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- update
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- repair
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- doctor
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- uninstall
+```
+
+Local checkout:
+
+```bash
+make install
+make update
+make repair
+make doctor
+make uninstall
+```
+
+See [Install Guide](docs/install.md) for `--dry-run`, `--purge`, `init-project`, and environment options.
+
+Initialize one project after install:
+
+```bash
+sh ./install.sh init-project /path/to/project
+```
+
+This adds a project `AGENTS.md` include for the installed coordinator template under `$HOME/.helm-agent/main-agent-template.md`.
+
 ## Current Focus
 
 - Durable task records under `HELM_AGENT_HOME`.

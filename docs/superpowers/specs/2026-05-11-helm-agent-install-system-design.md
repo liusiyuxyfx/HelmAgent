@@ -45,6 +45,7 @@ make uninstall-purge
 - Default repository: `https://github.com/liusiyuxyfx/HelmAgent.git`.
 - Default data directory: `$HOME/.helm-agent`.
 - Env file: `$HOME/.helm-agent/env`.
+- Main-agent template file: `$HOME/.helm-agent/main-agent-template.md`.
 - Binary installation uses:
 
 ```bash
@@ -54,6 +55,7 @@ cargo install --git "$HELM_AGENT_REPO" --locked --force
 - `HELM_AGENT_REPO` can override the Git remote.
 - `HELM_AGENT_HOME` can override the data directory.
 - `HELM_AGENT_BIN_DIR` can override the binary directory used for PATH diagnostics; default is `$HOME/.cargo/bin`.
+- `HELM_AGENT_TEMPLATE_URL` can override the template download URL when running from a piped installer instead of a local checkout.
 - `--dry-run` prints planned operations and does not mutate files or run cargo.
 
 ## Actions
@@ -69,6 +71,7 @@ export HELM_AGENT_HOME="$HOME/.helm-agent"
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
+- Install `$HELM_AGENT_HOME/main-agent-template.md` from the local checkout when available, otherwise download it from `HELM_AGENT_TEMPLATE_URL`.
 - Run cargo install.
 - Run `helm-agent --help` when the binary is available.
 - Print project integration guidance.
@@ -82,14 +85,14 @@ export PATH="$HOME/.cargo/bin:$PATH"
 ### `doctor`
 
 - Report whether `cargo`, `git`, `rustc`, and `helm-agent` are available.
-- Report whether `$HELM_AGENT_HOME` and env file exist.
+- Report whether `$HELM_AGENT_HOME`, env file, and main-agent template exist.
 - Report whether `$HELM_AGENT_BIN_DIR` is on `PATH`.
 - Report whether `helm-agent task board` can execute.
 - Exit non-zero if any required check fails.
 
 ### `repair`
 
-- Ensure `$HELM_AGENT_HOME` and env file exist.
+- Ensure `$HELM_AGENT_HOME`, env file, and main-agent template exist.
 - Reinstall binary if missing.
 - Run doctor at the end.
 
@@ -104,9 +107,10 @@ export PATH="$HOME/.cargo/bin:$PATH"
 - Append a single include line to `<path>/AGENTS.md`:
 
 ```markdown
-@<repo>/docs/agent-integrations/main-agent-template.md
+@$HELM_AGENT_HOME/main-agent-template.md
 ```
 
+- Install the template first when it is missing.
 - Create `AGENTS.md` if missing.
 - Do not duplicate the include line if already present.
 - Do not modify global Claude Code or Codex settings.

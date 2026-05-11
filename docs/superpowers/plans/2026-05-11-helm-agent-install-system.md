@@ -4,7 +4,7 @@
 
 **Goal:** Add an open-source style installer with install, update, repair, doctor, uninstall, purge, and project initialization commands.
 
-**Architecture:** Keep runtime HelmAgent unchanged. Add a POSIX shell installer with safe dry-run behavior, a Makefile as local command sugar, install documentation, and integration tests that exercise installer dry-run output without mutating the host.
+**Architecture:** Keep runtime HelmAgent unchanged. Add a POSIX shell installer with safe dry-run behavior, a Makefile as local command sugar, install documentation, and integration tests that exercise installer dry-run output without mutating the host. Install reusable coordinator instructions under `HELM_AGENT_HOME` so project setup does not depend on a checked-out repository path.
 
 **Tech Stack:** POSIX `sh`, Rust integration tests, Cargo install, Makefile.
 
@@ -72,6 +72,7 @@ Helpers:
 - `ensure_home`
 - `write_env`
 - `cargo_install`
+- `install_template`
 - `doctor`
 - `usage`
 
@@ -122,6 +123,7 @@ Docs must include:
 - purge
 - init-project
 - env variables
+- installed main-agent template path
 - safety notes
 
 - [ ] **Step 3: Verify docs contain required commands**
