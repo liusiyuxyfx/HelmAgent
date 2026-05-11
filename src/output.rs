@@ -31,3 +31,27 @@ pub fn resume_text(task: &TaskRecord) -> String {
 
     format!("{id}\nAttach: {attach}\nResume: {resume}\n", id = task.id)
 }
+
+pub fn task_list(tasks: &[TaskRecord]) -> String {
+    let mut output = String::new();
+
+    for task in tasks {
+        let runtime = task
+            .assignment
+            .runtime
+            .map(|runtime| runtime.as_str())
+            .unwrap_or("-");
+        output.push_str(&format!(
+            "{id}\t{status}\t{risk}\t{runtime}\t{title}\t{last}\t{next}\n",
+            id = task.id,
+            status = task.status.as_str(),
+            risk = task.risk.as_str(),
+            runtime = runtime,
+            title = task.title,
+            last = task.progress.last_event,
+            next = task.progress.next_action,
+        ));
+    }
+
+    output
+}

@@ -30,12 +30,22 @@ struct TaskCommand {
 
 #[derive(Debug, Subcommand)]
 enum TaskSubcommand {
+    List(ListArgs),
     Create(CreateArgs),
     Status(StatusArgs),
     Resume(ResumeArgs),
     Dispatch(DispatchArgs),
+    Mark(MarkArgs),
     Event(EventArgs),
     Review(ReviewArgs),
+}
+
+#[derive(Debug, Args)]
+struct ListArgs {
+    #[arg(long = "status")]
+    status: Vec<StatusArg>,
+    #[arg(long)]
+    review: bool,
 }
 
 #[derive(Debug, Args)]
@@ -67,6 +77,53 @@ struct DispatchArgs {
     dry_run: bool,
     #[arg(long)]
     confirm: bool,
+}
+
+#[derive(Debug, Args)]
+struct MarkArgs {
+    id: String,
+    #[arg(long = "ready-for-review", conflicts_with_all = ["blocked", "triaged"])]
+    ready_for_review: bool,
+    #[arg(long, conflicts_with_all = ["ready_for_review", "triaged"])]
+    blocked: bool,
+    #[arg(long, conflicts_with_all = ["ready_for_review", "blocked"])]
+    triaged: bool,
+    #[arg(long)]
+    message: String,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+enum StatusArg {
+    Inbox,
+    Triaged,
+    WaitingUser,
+    Queued,
+    Running,
+    Blocked,
+    ReadyForReview,
+    Reviewing,
+    NeedsChanges,
+    Done,
+    Archived,
+}
+
+impl From<StatusArg> for TaskStatus {
+    fn from(value: StatusArg) -> Self {
+        match value {
+            StatusArg::Inbox => TaskStatus::Inbox,
+            StatusArg::Triaged => TaskStatus::Triaged,
+            StatusArg::WaitingUser => TaskStatus::WaitingUser,
+            StatusArg::Queued => TaskStatus::Queued,
+            StatusArg::Running => TaskStatus::Running,
+            StatusArg::Blocked => TaskStatus::Blocked,
+            StatusArg::ReadyForReview => TaskStatus::ReadyForReview,
+            StatusArg::Reviewing => TaskStatus::Reviewing,
+            StatusArg::NeedsChanges => TaskStatus::NeedsChanges,
+            StatusArg::Done => TaskStatus::Done,
+            StatusArg::Archived => TaskStatus::Archived,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -135,6 +192,31 @@ pub fn run() -> Result<()> {
 
 fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
     match task.command {
+        TaskSubcommand::List(args) => {
+            let mut tasks = store.list_tasks()?;
+            tasks.retain(|task| task.status != TaskStatus::Archived);
+
+            if !args.status.is_empty() {
+                let statuses: Vec<TaskStatus> =
+                    args.status.into_iter().map(TaskStatus::from).collect();
+                tasks.retain(|task| statuses.contains(&task.status));
+            }
+
+            if args.review {
+                tasks.retain(|task| {
+                    matches!(
+                        task.status,
+                        TaskStatus::ReadyForReview
+                            | TaskStatus::Reviewing
+                            | TaskStatus::NeedsChanges
+                    )
+                });
+            }
+
+            tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            print!("{}", output::task_list(&tasks));
+            Ok(())
+        }
         TaskSubcommand::Create(args) => {
             if store.task_path(&args.id).exists() {
                 bail!("task {} already exists", args.id);
@@ -241,6 +323,41 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                     .as_deref()
                     .unwrap_or("No native resume command recorded")
             );
+            Ok(())
+        }
+        TaskSubcommand::Mark(args) => {
+            let now = OffsetDateTime::now_utc();
+            let mut task = store.load_task(&args.id)?;
+            let (status, event_type, next_action) = if args.ready_for_review {
+                task.review.state = ReviewState::Required;
+                task.progress.blocker = None;
+                (
+                    TaskStatus::ReadyForReview,
+                    "ready_for_review",
+                    "Human review required",
+                )
+            } else if args.blocked {
+                task.progress.blocker = Some(args.message.clone());
+                (TaskStatus::Blocked, "blocked", "Resolve blocker")
+            } else if args.triaged {
+                task.progress.blocker = None;
+                (TaskStatus::Triaged, "triaged", "Dispatch or defer task")
+            } else {
+                bail!("mark requires --ready-for-review, --blocked, or --triaged");
+            };
+
+            task.status = status;
+            task.progress.last_event = args.message.clone();
+            task.progress.next_action = next_action.to_string();
+            task.touch(now);
+            store.save_task(&task)?;
+            store.append_event(&TaskEvent::new(
+                args.id.clone(),
+                event_type,
+                args.message,
+                now,
+            ))?;
+            println!("Marked {} {}", args.id, status.as_str());
             Ok(())
         }
         TaskSubcommand::Event(args) => {

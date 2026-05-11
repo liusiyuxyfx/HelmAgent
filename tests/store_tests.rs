@@ -249,9 +249,7 @@ fn list_tasks_rejects_record_from_unexpected_path() {
     fs::create_dir_all(wrong_path.parent().unwrap()).unwrap();
     fs::write(wrong_path, serde_yaml::to_string(&task).unwrap()).unwrap();
 
-    let error = store
-        .list_tasks()
-        .expect_err("mismatched path should fail");
+    let error = store.list_tasks().expect_err("mismatched path should fail");
     let error_text = format!("{error:#}");
 
     assert!(error_text.contains("task id mismatch"), "{error_text}");

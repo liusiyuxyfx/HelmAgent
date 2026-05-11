@@ -472,6 +472,201 @@ fn medium_risk_dispatch_requires_confirmation_before_tmux_launch() {
 }
 
 #[test]
+fn list_tasks_shows_active_tasks_newest_first() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-001",
+            "--title",
+            "Older task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-002",
+            "--title",
+            "Newer task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-002"))
+        .stdout(contains("PM-20260511-001"))
+        .stdout(contains("Newer task"))
+        .stdout(contains("Older task"));
+}
+
+#[test]
+fn list_tasks_filters_by_status_and_review_queue() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-003",
+            "--title",
+            "Queued task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-004",
+            "--title",
+            "Review task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-003",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260511-004",
+            "--ready-for-review",
+            "--message",
+            "Ready",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list", "--status", "queued"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-003"))
+        .stdout(predicates::str::contains("PM-20260511-004").not());
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list", "--review"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-004"))
+        .stdout(predicates::str::contains("PM-20260511-003").not());
+}
+
+#[test]
+fn mark_ready_for_review_and_blocked_update_real_status() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-005",
+            "--title",
+            "Review me",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260511-005",
+            "--ready-for-review",
+            "--message",
+            "Patch and tests ready",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Marked PM-20260511-005 ready_for_review"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260511-005"])
+        .assert()
+        .success()
+        .stdout(contains("[ready_for_review]"))
+        .stdout(contains("Patch and tests ready"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-005").unwrap();
+    assert_eq!(task.review.state, helm_agent::domain::ReviewState::Required);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260511-005",
+            "--blocked",
+            "--message",
+            "Waiting for user",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Marked PM-20260511-005 blocked"));
+
+    let task = store.load_task("PM-20260511-005").unwrap();
+    assert_eq!(task.status, TaskStatus::Blocked);
+    assert_eq!(task.progress.blocker.as_deref(), Some("Waiting for user"));
+}
+
+#[test]
+fn mark_requires_one_state_and_message() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "mark", "PM-20260511-404", "--ready-for-review"])
+        .assert()
+        .failure()
+        .stderr(contains("required"));
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "mark",
+            "PM-20260511-404",
+            "--ready-for-review",
+            "--blocked",
+            "--message",
+            "bad",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("cannot be used with"));
+}
+
+#[test]
 fn review_requires_accept_or_request_changes() {
     let home = tempdir().unwrap();
 
