@@ -127,7 +127,7 @@ This creates or updates `/path/to/project/AGENTS.md` and `/path/to/project/CLAUD
 
 Use `--agent codex`, `--agent claude`, or `--agent opencode` when you only want one runtime's project guidance file.
 
-The legacy installer path is still available when you only have the install script:
+The legacy installer path delegates to the safe CLI updater. It works after `helm-agent` is installed, or from a local checkout with Cargo available:
 
 ```bash
 INSTALLER=/tmp/helm-agent-install.sh

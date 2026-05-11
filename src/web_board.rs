@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 
 pub const DEFAULT_REFRESH_SECONDS: u64 = 5;
 
@@ -50,10 +50,11 @@ pub fn load_task_board_tasks(store: &TaskStore) -> Result<Vec<TaskRecord>> {
 }
 
 pub fn serve_task_board(store: &TaskStore, host: &str, port: u16) -> Result<()> {
-    validate_loopback_bind_host(host, port)?;
-    let listener = TcpListener::bind((host, port))
+    let bind_address = loopback_bind_address(host, port)?;
+    let listener = TcpListener::bind(bind_address)
         .with_context(|| format!("bind HelmAgent board server on {host}:{port}"))?;
-    println!("Serving HelmAgent board at http://{host}:{port}");
+    let local_address = listener.local_addr().unwrap_or(bind_address);
+    println!("Serving HelmAgent board at http://{local_address}");
 
     for stream in listener.incoming() {
         let stream = stream.context("accept board connection")?;
@@ -85,6 +86,11 @@ fn handle_connection(mut stream: TcpStream, store: &TaskStore) -> Result<()> {
 }
 
 pub fn validate_loopback_bind_host(host: &str, port: u16) -> Result<()> {
+    loopback_bind_address(host, port)?;
+    Ok(())
+}
+
+pub fn loopback_bind_address(host: &str, port: u16) -> Result<SocketAddr> {
     let addresses = (host, port)
         .to_socket_addrs()
         .with_context(|| format!("resolve board host {host}:{port}"))?
@@ -97,7 +103,7 @@ pub fn validate_loopback_bind_host(host: &str, port: u16) -> Result<()> {
         bail!("board serve only supports loopback hosts by default: {host}");
     }
 
-    Ok(())
+    Ok(addresses[0])
 }
 
 pub fn is_allowed_board_request_host(request: &str) -> bool {

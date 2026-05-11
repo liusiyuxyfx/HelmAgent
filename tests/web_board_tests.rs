@@ -115,6 +115,10 @@ fn board_request_host_must_be_loopback() {
 fn board_serve_rejects_non_loopback_bind_hosts() {
     web_board::validate_loopback_bind_host("127.0.0.1", 8765).unwrap();
     web_board::validate_loopback_bind_host("localhost", 8765).unwrap();
+    assert!(web_board::loopback_bind_address("localhost", 8765)
+        .unwrap()
+        .ip()
+        .is_loopback());
 
     let err = web_board::validate_loopback_bind_host("0.0.0.0", 8765)
         .unwrap_err()

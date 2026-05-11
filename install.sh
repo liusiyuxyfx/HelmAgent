@@ -159,8 +159,7 @@ install_template() {
     if is_local_checkout && [ -f "$local_template" ]; then
         plan "install template $HELM_AGENT_TEMPLATE_FILE"
         if [ "$DRY_RUN" -eq 0 ]; then
-            mkdir -p "$HELM_AGENT_HOME"
-            cp "$local_template" "$HELM_AGENT_TEMPLATE_FILE"
+            install_template_from_file "$local_template"
         fi
         return 0
     fi
@@ -172,9 +171,47 @@ install_template() {
             log "missing: curl is required to fetch main-agent template"
             exit 1
         fi
-        mkdir -p "$HELM_AGENT_HOME"
-        curl -fsSL "$HELM_AGENT_TEMPLATE_URL" -o "$HELM_AGENT_TEMPLATE_FILE"
+        install_template_from_url "$HELM_AGENT_TEMPLATE_URL"
     fi
+}
+
+ensure_template_target_safe() {
+    if [ -L "$HELM_AGENT_TEMPLATE_FILE" ]; then
+        log "refusing to update symlink template $HELM_AGENT_TEMPLATE_FILE"
+        exit 1
+    fi
+    if [ -e "$HELM_AGENT_TEMPLATE_FILE" ] && [ ! -f "$HELM_AGENT_TEMPLATE_FILE" ]; then
+        log "refusing to update non-file template $HELM_AGENT_TEMPLATE_FILE"
+        exit 1
+    fi
+}
+
+template_temp_file() {
+    mktemp "$HELM_AGENT_HOME/.main-agent-template.md.XXXXXX"
+}
+
+install_template_from_file() {
+    source_file=$1
+    mkdir -p "$HELM_AGENT_HOME"
+    ensure_template_target_safe
+    tmp_file="$(template_temp_file)"
+    if ! cp "$source_file" "$tmp_file"; then
+        rm -f -- "$tmp_file"
+        exit 1
+    fi
+    mv -f -- "$tmp_file" "$HELM_AGENT_TEMPLATE_FILE"
+}
+
+install_template_from_url() {
+    template_url=$1
+    mkdir -p "$HELM_AGENT_HOME"
+    ensure_template_target_safe
+    tmp_file="$(template_temp_file)"
+    if ! curl -fsSL "$template_url" -o "$tmp_file"; then
+        rm -f -- "$tmp_file"
+        exit 1
+    fi
+    mv -f -- "$tmp_file" "$HELM_AGENT_TEMPLATE_FILE"
 }
 
 print_guidance() {
@@ -422,26 +459,18 @@ uninstall_cmd() {
 
 init_project_cmd() {
     project_path=$1
-    agents_file="$project_path/AGENTS.md"
-    include_line="@$HELM_AGENT_TEMPLATE_FILE"
 
     plan "init project $project_path"
-    plan "update $agents_file"
-    plan "include $include_line"
+    plan "helm-agent project init --path $project_path --agent codex"
 
     if [ "$DRY_RUN" -eq 0 ]; then
-        if [ ! -f "$HELM_AGENT_TEMPLATE_FILE" ]; then
-            install_template
-        fi
-        mkdir -p "$project_path"
-        if [ ! -f "$agents_file" ]; then
-            : > "$agents_file"
-        fi
-        if ! grep -Fxq "$include_line" "$agents_file"; then
-            if [ -s "$agents_file" ]; then
-                printf '\n' >> "$agents_file"
-            fi
-            printf '%s\n' "$include_line" >> "$agents_file"
+        if is_local_checkout && have cargo; then
+            run cargo run --quiet --bin helm-agent -- project init --path "$project_path" --agent codex
+        elif have helm-agent; then
+            run helm-agent project init --path "$project_path" --agent codex
+        else
+            log "missing: helm-agent is required for safe project initialization; run install first"
+            exit 1
         fi
     fi
 }

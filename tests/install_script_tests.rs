@@ -2,6 +2,16 @@ use std::fs::File;
 use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
+#[cfg(unix)]
+fn fake_executable(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, "#!/bin/sh\nexit 0\n").unwrap();
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
 fn run_install_script(args: &[&str]) -> (bool, String, String) {
     run_install_script_with_env(args, &[])
 }
@@ -244,16 +254,17 @@ fn doctor_dry_run_does_not_execute_helm_agent() {
 }
 
 #[test]
-fn init_project_dry_run_prints_agents_target_and_template_include() {
+fn init_project_dry_run_prints_safe_cli_delegation() {
     let project = tempdir().unwrap();
     let project_path = project.path().to_string_lossy().to_string();
     let (success, stdout, stderr) =
         run_install_script(&["init-project", project_path.as_str(), "--dry-run"]);
 
     assert!(success, "{stdout}\n{stderr}");
-    assert!(stdout.contains("AGENTS.md"), "{stdout}");
     assert!(
-        stdout.contains(".helm-agent/main-agent-template.md"),
+        stdout.contains(&format!(
+            "helm-agent project init --path {project_path} --agent codex"
+        )),
         "{stdout}"
     );
 }
@@ -271,7 +282,11 @@ fn init_project_writes_agents_include_and_installs_template() {
     );
 
     assert!(success, "{stdout}\n{stderr}");
-    let template_path = home.path().join("main-agent-template.md");
+    let template_path = home
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("main-agent-template.md");
     let agents_file = project.path().join("AGENTS.md");
     assert!(template_path.exists(), "{stdout}");
     assert!(agents_file.exists(), "{stdout}");
@@ -284,6 +299,48 @@ fn init_project_writes_agents_include_and_installs_template() {
 
     let template = std::fs::read_to_string(template_path).unwrap();
     assert!(template.contains("HelmAgent"), "{template}");
+}
+
+#[cfg(unix)]
+#[test]
+fn install_refuses_symlink_template_target() {
+    use std::os::unix::fs::symlink;
+
+    let home = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let bin = tempdir().unwrap();
+    let outside_template = outside.path().join("main-agent-template.md");
+    std::fs::write(&outside_template, "external template\n").unwrap();
+    symlink(
+        &outside_template,
+        home.path().join("main-agent-template.md"),
+    )
+    .unwrap();
+
+    for tool in ["cargo", "git", "rustc"] {
+        fake_executable(&bin.path().join(tool));
+    }
+
+    let existing_path = std::env::var("PATH").unwrap();
+    let path = format!("{}:{existing_path}", bin.path().to_string_lossy());
+    let home_path = home.path().to_string_lossy().to_string();
+    let (success, stdout, stderr) = run_install_script_with_env(
+        &["install"],
+        &[
+            ("HELM_AGENT_HOME", home_path.as_str()),
+            ("PATH", path.as_str()),
+        ],
+    );
+
+    assert!(!success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("refusing to update symlink template"),
+        "{stdout}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(outside_template).unwrap(),
+        "external template\n"
+    );
 }
 
 #[test]
