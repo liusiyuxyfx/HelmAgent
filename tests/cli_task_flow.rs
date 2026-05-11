@@ -698,12 +698,14 @@ fn board_groups_tasks_for_human_review() {
 
     let mut running = store.load_task("PM-20260511-B002").unwrap();
     running.status = TaskStatus::Running;
+    running.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(3);
     running.progress.last_event = "Child agent is editing files".to_string();
     running.progress.next_action = "Check child progress".to_string();
     store.save_task(&running).unwrap();
 
     let mut blocked = store.load_task("PM-20260511-B003").unwrap();
     blocked.status = TaskStatus::Blocked;
+    blocked.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(5);
     blocked.progress.blocker = Some("Waiting for API contract".to_string());
     blocked.progress.last_event = "Blocked by API contract".to_string();
     blocked.progress.next_action = "Resolve blocker".to_string();
@@ -712,6 +714,8 @@ fn board_groups_tasks_for_human_review() {
     let mut review = store.load_task("PM-20260511-B004").unwrap();
     review.status = TaskStatus::Triaged;
     review.risk = RiskLevel::Medium;
+    review.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(4);
+    review.project.branch = Some("feature/auth".to_string());
     review.review.state = ReviewState::Required;
     review.review.reason = Some("Touches auth flow".to_string());
     review.progress.last_event = "Triaged risk=medium, review_reason=set".to_string();
@@ -720,6 +724,7 @@ fn board_groups_tasks_for_human_review() {
 
     let mut done = store.load_task("PM-20260511-B005").unwrap();
     done.status = TaskStatus::Done;
+    done.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(1);
     done.progress.last_event = "Review accepted".to_string();
     done.progress.next_action = "Archive task when ready".to_string();
     store.save_task(&done).unwrap();
@@ -728,23 +733,47 @@ fn board_groups_tasks_for_human_review() {
     archived.status = TaskStatus::Archived;
     store.save_task(&archived).unwrap();
 
-    helm_agent_with_home(home.path())
+    let output = helm_agent_with_home(home.path())
         .args(["task", "board"])
         .assert()
         .success()
-        .stdout(contains("Inbox"))
-        .stdout(contains("PM-20260511-B001"))
-        .stdout(contains("Running"))
-        .stdout(contains("PM-20260511-B002"))
-        .stdout(contains("Blocked"))
-        .stdout(contains("PM-20260511-B003"))
-        .stdout(contains("blocker: Waiting for API contract"))
-        .stdout(contains("Review"))
-        .stdout(contains("PM-20260511-B004"))
-        .stdout(contains("review: Touches auth flow"))
-        .stdout(contains("Done"))
-        .stdout(contains("PM-20260511-B005"))
-        .stdout(predicates::str::contains("PM-20260511-B006").not());
+        .get_output()
+        .stdout
+        .clone();
+    let board = String::from_utf8(output).unwrap();
+
+    assert!(board.contains("Inbox"), "{board}");
+    assert!(board.contains("PM-20260511-B001"), "{board}");
+    assert!(board.contains("Running"), "{board}");
+    assert!(board.contains("PM-20260511-B002"), "{board}");
+    assert!(board.contains("Blocked"), "{board}");
+    assert!(board.contains("PM-20260511-B003"), "{board}");
+    assert!(
+        board.contains("blocker: Waiting for API contract"),
+        "{board}"
+    );
+    assert!(board.contains("Review"), "{board}");
+    assert!(
+        board.contains(
+            "- PM-20260511-B004 [status=triaged review=required risk=medium runtime=- priority=normal] Review task"
+        ),
+        "{board}"
+    );
+    assert!(board.contains("project: /repo"), "{board}");
+    assert!(board.contains("branch: feature/auth"), "{board}");
+    assert!(board.contains("updated: 1970-01-01T00:00:04Z"), "{board}");
+    assert!(board.contains("review: Touches auth flow"), "{board}");
+    assert!(board.contains("Done"), "{board}");
+    assert!(board.contains("PM-20260511-B005"), "{board}");
+    assert!(!board.contains("PM-20260511-B006"), "{board}");
+
+    let blocked_index = board.find("Blocked").unwrap();
+    let review_index = board.find("Review").unwrap();
+    let running_index = board.find("Running").unwrap();
+    let inbox_index = board.find("Inbox").unwrap();
+    assert!(blocked_index < review_index, "{board}");
+    assert!(review_index < running_index, "{board}");
+    assert!(running_index < inbox_index, "{board}");
 }
 
 #[test]

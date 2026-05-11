@@ -1,5 +1,6 @@
 use crate::domain::{ReviewState, TaskEvent, TaskRecord, TaskStatus};
 use std::fmt::Write as _;
+use time::format_description::well_known::Rfc3339;
 
 pub fn task_status(task: &TaskRecord, events: &[TaskEvent]) -> String {
     let last_event = events
@@ -72,12 +73,12 @@ pub fn task_board(tasks: &[TaskRecord]) -> String {
     }
 
     let lanes = [
-        BoardLane::Inbox,
-        BoardLane::Triaged,
-        BoardLane::Queued,
-        BoardLane::Running,
         BoardLane::Blocked,
         BoardLane::Review,
+        BoardLane::Running,
+        BoardLane::Queued,
+        BoardLane::Triaged,
+        BoardLane::Inbox,
         BoardLane::Done,
     ];
     let mut output = String::new();
@@ -104,14 +105,23 @@ pub fn task_board(tasks: &[TaskRecord]) -> String {
                 .unwrap_or("-");
             writeln!(
                 &mut output,
-                "- {id} [{risk}/{runtime}/{priority}] {title}",
+                "- {id} [status={status} review={review} risk={risk} runtime={runtime} priority={priority}] {title}",
                 id = task.id,
+                status = task.status.as_str(),
+                review = review_state_as_str(task.review.state),
                 risk = task.risk.as_str(),
                 runtime = runtime,
                 priority = task.priority,
                 title = task.title,
             )
             .expect("write to string");
+            writeln!(&mut output, "  project: {}", task.project.path.display())
+                .expect("write to string");
+            if let Some(branch) = task.project.branch.as_deref() {
+                writeln!(&mut output, "  branch: {branch}").expect("write to string");
+            }
+            writeln!(&mut output, "  updated: {}", format_updated_at(task))
+                .expect("write to string");
             writeln!(&mut output, "  next: {}", task.progress.next_action)
                 .expect("write to string");
             writeln!(&mut output, "  last: {}", task.progress.last_event).expect("write to string");
@@ -135,6 +145,21 @@ pub fn task_board(tasks: &[TaskRecord]) -> String {
         "No active tasks\n".to_string()
     } else {
         output
+    }
+}
+
+fn format_updated_at(task: &TaskRecord) -> String {
+    task.updated_at
+        .format(&Rfc3339)
+        .expect("format task updated_at")
+}
+
+fn review_state_as_str(state: ReviewState) -> &'static str {
+    match state {
+        ReviewState::NotRequired => "not_required",
+        ReviewState::Required => "required",
+        ReviewState::Accepted => "accepted",
+        ReviewState::ChangesRequested => "changes_requested",
     }
 }
 

@@ -37,14 +37,14 @@ Rules:
 - Shows only lanes that contain tasks.
 - Prints `No active tasks` when no non-archived tasks exist.
 
-Lanes:
+Lane display order:
 
-- `Inbox`: `inbox`
-- `Triaged`: `triaged`
-- `Queued`: `queued`
-- `Running`: `running`
 - `Blocked`: `blocked`, `waiting_user`
 - `Review`: tasks with `review.state = required`, plus `ready_for_review`, `reviewing`, `needs_changes`
+- `Running`: `running`
+- `Queued`: `queued`
+- `Triaged`: `triaged`
+- `Inbox`: `inbox`
 - `Done`: `done`
 
 If a task could fit more than one lane, the board uses the first matching lane in this priority order:
@@ -58,7 +58,10 @@ This keeps human-attention work visible even when the task status is still `tria
 Task lines:
 
 ```text
-- PM-20260511-001 [medium/claude/high] Add retry tests
+- PM-20260511-001 [status=ready_for_review review=required risk=medium runtime=claude priority=high] Add retry tests
+  project: /repo/app
+  branch: feature/retry
+  updated: 2026-05-11T08:30:00Z
   next: Human review required
   last: Patch and tests ready
   review: Touches retry policy
@@ -68,9 +71,9 @@ Task lines:
 
 Line rules:
 
-- First line always includes id, risk, runtime or `-`, priority, and title.
-- `next` and `last` are always shown.
-- `blocker`, `review`, `attach`, and `resume` are shown only when present.
+- First line always includes id, status, review state, risk, runtime or `-`, priority, and title.
+- `project`, `updated`, `next`, and `last` are always shown.
+- `branch`, `blocker`, `review`, `attach`, and `resume` are shown only when present.
 
 ## Main-Agent Template
 
