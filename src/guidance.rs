@@ -1,7 +1,7 @@
 use crate::paths::canonical_helm_agent_home;
 use anyhow::{bail, Context, Result};
 use std::fs::{self, Metadata, OpenOptions};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub const MAIN_AGENT_TEMPLATE_FILE: &str = "main-agent-template.md";
@@ -121,18 +121,29 @@ pub fn add_project_guidance_include(
     let target_path = project_path.join(guidance_file.file_name());
     reject_symlink_guidance_file(&target_path)?;
     let include_line = format!("@{}", template_path.as_ref().display());
-    let mut content = if target_path
-        .try_exists()
-        .with_context(|| format!("check guidance file {}", target_path.display()))?
-    {
-        fs::read_to_string(&target_path)
-            .with_context(|| format!("read guidance file {}", target_path.display()))?
-    } else {
-        String::new()
-    };
+    update_guidance_file_no_follow(&target_path, &include_line)?;
+    Ok(target_path)
+}
+
+fn update_guidance_file_no_follow(target_path: &Path, include_line: &str) -> Result<()> {
+    let mut file = open_guidance_file_no_follow(target_path)
+        .with_context(|| format!("open guidance file {}", target_path.display()))?;
+    let metadata = file
+        .metadata()
+        .with_context(|| format!("inspect guidance file {}", target_path.display()))?;
+    if !metadata.file_type().is_file() {
+        bail!(
+            "refuse to update non-file guidance file {}",
+            target_path.display()
+        );
+    }
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .with_context(|| format!("read guidance file {}", target_path.display()))?;
 
     if content.lines().any(|line| line == include_line) {
-        return Ok(target_path);
+        return Ok(());
     }
 
     if content.is_empty() {
@@ -147,9 +158,13 @@ pub fn add_project_guidance_include(
         content.push('\n');
     }
 
-    fs::write(&target_path, content)
+    file.set_len(0)
+        .with_context(|| format!("truncate guidance file {}", target_path.display()))?;
+    file.seek(SeekFrom::Start(0))
+        .with_context(|| format!("rewind guidance file {}", target_path.display()))?;
+    file.write_all(content.as_bytes())
         .with_context(|| format!("write guidance file {}", target_path.display()))?;
-    Ok(target_path)
+    Ok(())
 }
 
 fn reject_symlink_guidance_file(target_path: &Path) -> Result<()> {
@@ -166,6 +181,28 @@ fn reject_symlink_guidance_file(target_path: &Path) -> Result<()> {
             Err(error).with_context(|| format!("inspect guidance file {}", target_path.display()))
         }
     }
+}
+
+#[cfg(unix)]
+fn open_guidance_file_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_guidance_file_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .open(path)
 }
 
 fn installed_template_exists(path: &Path) -> Result<bool> {

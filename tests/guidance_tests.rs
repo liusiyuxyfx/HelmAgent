@@ -100,3 +100,20 @@ fn project_guidance_refuses_symlink_targets() {
         "external guidance\n"
     );
 }
+
+#[test]
+fn project_guidance_refuses_directory_targets() {
+    let project = tempdir().unwrap();
+    std::fs::create_dir(project.path().join("AGENTS.md")).unwrap();
+
+    let template_path = project.path().join(".helm-agent/main-agent-template.md");
+    let err = add_project_guidance_include(project.path(), GuidanceFile::Agents, &template_path)
+        .unwrap_err()
+        .to_string();
+
+    assert!(
+        err.contains("open guidance file")
+            || err.contains("refuse to update non-file guidance file"),
+        "{err}"
+    );
+}
