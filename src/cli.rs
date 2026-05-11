@@ -1,9 +1,11 @@
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
+use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
 use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
 use crate::paths::helm_agent_home;
 use crate::policy::{DispatchDecision, PolicyInput};
 use crate::store::TaskStore;
+use crate::web_board;
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
@@ -20,12 +22,71 @@ pub struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Task(TaskCommand),
+    Project(ProjectCommand),
+    Agent(AgentCommand),
+    Board(BoardCommand),
 }
 
 #[derive(Debug, Args)]
 struct TaskCommand {
     #[command(subcommand)]
     command: TaskSubcommand,
+}
+
+#[derive(Debug, Args)]
+struct ProjectCommand {
+    #[command(subcommand)]
+    command: ProjectSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ProjectSubcommand {
+    Init(ProjectInitArgs),
+}
+
+#[derive(Debug, Args)]
+struct ProjectInitArgs {
+    #[arg(long)]
+    path: PathBuf,
+    #[arg(long)]
+    agent: ProjectAgentArg,
+}
+
+#[derive(Debug, Args)]
+struct AgentCommand {
+    #[command(subcommand)]
+    command: AgentSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AgentSubcommand {
+    Prompt(AgentPromptArgs),
+}
+
+#[derive(Debug, Args)]
+struct AgentPromptArgs {
+    #[arg(long)]
+    runtime: GuidanceRuntimeArg,
+}
+
+#[derive(Debug, Args)]
+struct BoardCommand {
+    #[command(subcommand)]
+    command: BoardSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum BoardSubcommand {
+    Html,
+    Serve(BoardServeArgs),
+}
+
+#[derive(Debug, Args)]
+struct BoardServeArgs {
+    #[arg(long, default_value = "127.0.0.1")]
+    host: String,
+    #[arg(long, default_value_t = 8765)]
+    port: u16,
 }
 
 #[derive(Debug, Subcommand)]
@@ -186,12 +247,43 @@ enum RuntimeArg {
     OpenCode,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "kebab_case")]
+enum ProjectAgentArg {
+    Claude,
+    Codex,
+    #[clap(name = "opencode")]
+    OpenCode,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "kebab_case")]
+enum GuidanceRuntimeArg {
+    Claude,
+    Codex,
+    #[clap(name = "opencode")]
+    OpenCode,
+    All,
+}
+
 impl From<RuntimeArg> for AgentRuntime {
     fn from(value: RuntimeArg) -> Self {
         match value {
             RuntimeArg::Claude => AgentRuntime::Claude,
             RuntimeArg::Codex => AgentRuntime::Codex,
             RuntimeArg::OpenCode => AgentRuntime::OpenCode,
+        }
+    }
+}
+
+impl From<GuidanceRuntimeArg> for GuidanceRuntime {
+    fn from(value: GuidanceRuntimeArg) -> Self {
+        match value {
+            GuidanceRuntimeArg::Claude => GuidanceRuntime::Claude,
+            GuidanceRuntimeArg::Codex => GuidanceRuntime::Codex,
+            GuidanceRuntimeArg::OpenCode => GuidanceRuntime::OpenCode,
+            GuidanceRuntimeArg::All => GuidanceRuntime::All,
         }
     }
 }
@@ -238,6 +330,55 @@ pub fn run() -> Result<()> {
 
     match cli.command {
         Command::Task(task) => handle_task(task, &store),
+        Command::Project(project) => handle_project(project),
+        Command::Agent(agent) => handle_agent(agent),
+        Command::Board(board) => handle_board(board, &store),
+    }
+}
+
+fn handle_project(project: ProjectCommand) -> Result<()> {
+    match project.command {
+        ProjectSubcommand::Init(args) => {
+            let files = project_agent_files(args.agent);
+            for file in files {
+                let path = guidance::add_installed_project_guidance_include(&args.path, *file)?;
+                println!("Updated {}", file.file_name());
+            }
+            Ok(())
+        }
+    }
+}
+
+fn handle_agent(agent: AgentCommand) -> Result<()> {
+    match agent.command {
+        AgentSubcommand::Prompt(args) => {
+            print!(
+                "{}\n",
+                guidance::render_main_agent_prompt(GuidanceRuntime::from(args.runtime))?
+            );
+            Ok(())
+        }
+    }
+}
+
+fn handle_board(board: BoardCommand, store: &TaskStore) -> Result<()> {
+    match board.command {
+        BoardSubcommand::Html => {
+            let mut tasks = store.list_tasks()?;
+            tasks.retain(|task| task.status != TaskStatus::Archived);
+            tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            print!("{}", web_board::render_task_board_html(&tasks));
+            Ok(())
+        }
+        BoardSubcommand::Serve(args) => web_board::serve_task_board(store, &args.host, args.port),
+    }
+}
+
+fn project_agent_files(agent: ProjectAgentArg) -> &'static [GuidanceFile] {
+    match agent {
+        ProjectAgentArg::Codex | ProjectAgentArg::OpenCode => &[GuidanceFile::Agents],
+        ProjectAgentArg::Claude => &[GuidanceFile::Claude],
+        ProjectAgentArg::All => &[GuidanceFile::Agents, GuidanceFile::Claude],
     }
 }
 

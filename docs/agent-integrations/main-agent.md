@@ -2,6 +2,30 @@
 
 HelmAgent should be the source of truth for delegated coding work. Claude Code, Codex, and other main agents should record task state in HelmAgent before handing work to a child agent, then read HelmAgent before reporting progress or completion to a human.
 
+## Project Setup
+
+Install project-local guidance before starting the main agent:
+
+```bash
+helm-agent project init --path . --agent all
+```
+
+Runtime-specific setup:
+
+```bash
+helm-agent project init --path . --agent codex
+helm-agent project init --path . --agent claude
+helm-agent project init --path . --agent opencode
+```
+
+Manual startup prompt:
+
+```bash
+helm-agent agent prompt --runtime codex
+helm-agent agent prompt --runtime claude
+helm-agent agent prompt --runtime opencode
+```
+
 ## Main-Agent Rules
 
 - Create a HelmAgent task before delegating work.
@@ -52,6 +76,7 @@ helm-agent task list
 helm-agent task list --review
 helm-agent task list --status blocked --status ready_for_review
 helm-agent task board
+helm-agent board html
 ```
 
 Preview child-agent dispatch before starting anything:
@@ -94,6 +119,12 @@ helm-agent task dispatch --runtime codex --confirm PM-20260509-101
 ```
 
 If a workspace uses a non-default tmux binary, set `HELM_AGENT_TMUX_BIN` before real dispatch. HelmAgent-created tmux sessions use the `helm-agent-` session prefix.
+
+Serve the read-only browser board when useful:
+
+```bash
+helm-agent board serve --host 127.0.0.1 --port 8765
+```
 
 ## Delegation Summary Template
 

@@ -31,17 +31,28 @@ make doctor
 make uninstall
 ```
 
-See [Install Guide](docs/install.md) for `--dry-run`, `--purge`, `init-project`, and environment options.
+See [Install Guide](docs/install.md) for `--dry-run`, `--purge`, legacy `init-project`, and environment options.
 
-Initialize one project after install:
+Initialize one project after install so the main agent can discover HelmAgent instructions:
 
 ```bash
-INSTALLER=/tmp/helm-agent-install.sh
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" init-project /path/to/project
-sh ./install.sh init-project /path/to/project
+helm-agent project init --path /path/to/project --agent all
 ```
 
-This adds a project `AGENTS.md` include for the installed coordinator template under `$HOME/.helm-agent/main-agent-template.md`.
+This adds project-local `AGENTS.md` and `CLAUDE.md` includes for the installed coordinator template under `$HOME/.helm-agent/main-agent-template.md`.
+
+Print a main-agent bootstrap prompt:
+
+```bash
+helm-agent agent prompt --runtime codex
+helm-agent agent prompt --runtime claude
+```
+
+Open a read-only local board:
+
+```bash
+helm-agent board serve --host 127.0.0.1 --port 8765
+```
 
 ## Current Focus
 
@@ -85,6 +96,7 @@ helm-agent task list
 helm-agent task list --review
 helm-agent task list --status blocked --status ready_for_review
 helm-agent task board
+helm-agent board html
 ```
 
 Mark real task state:
@@ -99,4 +111,4 @@ helm-agent task review PM-20260511-001 --request-changes "Add a regression test 
 
 See [Main-Agent Integration](docs/agent-integrations/main-agent.md) for rules and command examples for Claude Code, Codex, and other main agents.
 
-Use [Main-Agent Operating Template](docs/agent-integrations/main-agent-template.md) as copyable coordinator instructions for Codex, Claude Code, or project-level agent guidance.
+Use `helm-agent project init --path . --agent all` to wire a project for Codex and Claude Code. Use `helm-agent agent prompt --runtime <codex|claude|opencode|all>` when starting a main agent manually.

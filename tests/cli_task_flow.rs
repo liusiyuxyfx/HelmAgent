@@ -30,6 +30,81 @@ fn fake_tmux_script(path: &Path, record_path: &Path) {
 }
 
 #[test]
+fn project_init_all_writes_agent_instruction_files_idempotently() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let template = home.path().join("main-agent-template.md");
+    fs::write(&template, "# HelmAgent Main-Agent Operating Template\n").unwrap();
+
+    for _ in 0..2 {
+        helm_agent_with_home(home.path())
+            .args([
+                "project",
+                "init",
+                "--path",
+                project.path().to_str().unwrap(),
+                "--agent",
+                "all",
+            ])
+            .assert()
+            .success()
+            .stdout(contains("Updated AGENTS.md"))
+            .stdout(contains("Updated CLAUDE.md"));
+    }
+
+    let include = format!("@{}", template.display());
+    let agents = fs::read_to_string(project.path().join("AGENTS.md")).unwrap();
+    let claude = fs::read_to_string(project.path().join("CLAUDE.md")).unwrap();
+    assert_eq!(agents.matches(&include).count(), 1);
+    assert_eq!(claude.matches(&include).count(), 1);
+}
+
+#[test]
+fn agent_prompt_prints_runtime_bootstrap_and_template() {
+    let home = tempdir().unwrap();
+    fs::write(
+        home.path().join("main-agent-template.md"),
+        "# HelmAgent Main-Agent Operating Template\nUse HelmAgent as source of truth.\n",
+    )
+    .unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["agent", "prompt", "--runtime", "codex"])
+        .assert()
+        .success()
+        .stdout(contains("Runtime: codex"))
+        .stdout(contains("helm-agent task board"))
+        .stdout(contains("Use HelmAgent as source of truth"));
+}
+
+#[test]
+fn board_html_renders_read_only_escaped_task_board() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-HTML",
+            "--title",
+            "Render <board> safely",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["board", "html"])
+        .assert()
+        .success()
+        .stdout(contains("<!doctype html>"))
+        .stdout(contains("Render &lt;board&gt; safely"))
+        .stdout(contains("No write actions are available"));
+}
+
+#[test]
 fn create_status_event_and_resume_task() {
     let home = tempdir().unwrap();
 
@@ -76,7 +151,8 @@ fn create_status_event_and_resume_task() {
         .assert()
         .success()
         .stdout(contains("No tmux session recorded"))
-        .stdout(contains("No native resume command recorded"));
+        .stdout(contains("No native resume command recorded"))
+        .stdout(contains("tmux attach is the reliable recovery path"));
 }
 
 #[test]
@@ -279,7 +355,8 @@ fn dry_run_dispatch_records_recovery_commands() {
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
         ))
-        .stdout(contains("Resume: codex resume <session-id> --all"));
+        .stdout(contains("Resume: codex resume <session-id> --all"))
+        .stdout(contains("tmux attach is the reliable recovery path"));
 }
 
 #[test]

@@ -38,7 +38,10 @@ pub fn resume_text(task: &TaskRecord) -> String {
         .as_deref()
         .unwrap_or("No native resume command recorded");
 
-    format!("{id}\nAttach: {attach}\nResume: {resume}\n", id = task.id)
+    format!(
+        "{id}\nAttach: {attach}\nResume: {resume}\nNote: tmux attach is the reliable recovery path. Native resume commands may require replacing <session-id> after the child agent records one.\n",
+        id = task.id
+    )
 }
 
 pub fn task_list(tasks: &[TaskRecord]) -> String {
