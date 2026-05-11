@@ -55,6 +55,7 @@ helm-agent task list --review
 
 `--review` shows tasks that need human attention:
 
+- tasks with `review.state = required`
 - `ready_for_review`
 - `needs_changes`
 - `reviewing`

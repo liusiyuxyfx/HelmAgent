@@ -244,22 +244,26 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
     match task.command {
         TaskSubcommand::List(args) => {
             let mut tasks = store.list_tasks()?;
-            tasks.retain(|task| task.status != TaskStatus::Archived);
+            let statuses: Vec<TaskStatus> = args.status.into_iter().map(TaskStatus::from).collect();
+            let includes_archived = statuses.contains(&TaskStatus::Archived);
 
-            if !args.status.is_empty() {
-                let statuses: Vec<TaskStatus> =
-                    args.status.into_iter().map(TaskStatus::from).collect();
+            if !includes_archived {
+                tasks.retain(|task| task.status != TaskStatus::Archived);
+            }
+
+            if !statuses.is_empty() {
                 tasks.retain(|task| statuses.contains(&task.status));
             }
 
             if args.review {
                 tasks.retain(|task| {
-                    matches!(
-                        task.status,
-                        TaskStatus::ReadyForReview
-                            | TaskStatus::Reviewing
-                            | TaskStatus::NeedsChanges
-                    )
+                    task.review.state == ReviewState::Required
+                        || matches!(
+                            task.status,
+                            TaskStatus::ReadyForReview
+                                | TaskStatus::Reviewing
+                                | TaskStatus::NeedsChanges
+                        )
                 });
             }
 

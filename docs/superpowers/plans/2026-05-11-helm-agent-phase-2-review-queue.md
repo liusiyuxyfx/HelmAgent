@@ -899,7 +899,7 @@ Expected: final output contains `PM-20260511-900` and `ready_for_review`.
 Run:
 
 ```bash
-rtk rg -n "Agent Ops Center|AOC|agent-ops-center|helmagent|Helm Agent|HELMAGENT|AOC_|AOC-" README.md docs src tests Cargo.toml
+rtk rg -n "Agent Ops Center|AOC|agent-ops-center|helmagent|Helm Agent|HELMAGENT|AOC_|AOC-" README.md docs/agent-integrations src tests Cargo.toml
 ```
 
 Expected: no matches.

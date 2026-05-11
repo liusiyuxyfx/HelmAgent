@@ -8,7 +8,7 @@ HelmAgent should be the source of truth for delegated coding work. Claude Code, 
 - Run `helm-agent task status <id>` before reporting task state.
 - Use `helm-agent task triage <id>` to record risk, priority, preferred runtime, and review reason before dispatch.
 - Run `helm-agent task dispatch --dry-run --runtime <runtime> <id>` before starting a child agent.
-- Do not claim code-changing work is complete until the task is marked ready for review and the artifacts are presented to the human.
+- Do not claim code-changing work is complete until `task review --accept` has been run. Before that, report it as ready for review once the task is marked ready and the artifacts are presented to the human.
 - Only the human or an explicitly authorized main agent should run `helm-agent task review --accept` or `helm-agent task review --request-changes`.
 - Show attach and resume commands whenever work is delegated or recovered.
 - Ask before using Codex unless the user has already approved it for the task or workspace.
@@ -102,9 +102,9 @@ Reason: Small isolated test and implementation task
 Status: ready_for_review
 Attach: tmux attach -t helm-agent-PM-20260509-101-claude
 Resume: claude --resume <session-id>
-Review: Human review required; suggested command: helm-agent task review PM-20260509-101 --accept
+Review: Inspect artifacts, then run helm-agent task review PM-20260509-101 --accept or --request-changes "<message>"
 ```
 
 ## Reporting Guidance
 
-Main agents should report HelmAgent state, not memory or assumptions. If `helm-agent task status <id>` says the task is running, report it as running. If the child agent says it is done but no review signal has been recorded or artifacts have not been presented to the human, report that review handoff is still pending.
+Main agents should report HelmAgent state, not memory or assumptions. If `helm-agent task status <id>` says the task is running, report it as running. If the child agent says it is done but the task is not marked ready for review or artifacts have not been presented to the human, report that review handoff is still pending. If the task is ready for review but not accepted, report that implementation is ready for review, not complete.

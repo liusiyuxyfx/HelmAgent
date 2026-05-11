@@ -7,6 +7,7 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tempfile::tempdir;
+use time::{Duration, OffsetDateTime};
 
 fn helm_agent_with_home(home: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("helm-agent").unwrap();
@@ -456,10 +457,10 @@ fn medium_risk_dispatch_requires_confirmation_before_tmux_launch() {
         .assert()
         .success();
 
-    let store = TaskStore::new(home.path().to_path_buf());
-    let mut task = store.load_task("PM-20260509-008").unwrap();
-    task.risk = RiskLevel::Medium;
-    store.save_task(&task).unwrap();
+    helm_agent_with_home(home.path())
+        .args(["task", "triage", "PM-20260509-008", "--risk", "medium"])
+        .assert()
+        .success();
 
     helm_agent_with_home(home.path())
         .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
@@ -503,14 +504,28 @@ fn list_tasks_shows_active_tasks_newest_first() {
         .assert()
         .success();
 
-    helm_agent_with_home(home.path())
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut older = store.load_task("PM-20260511-001").unwrap();
+    older.updated_at = OffsetDateTime::UNIX_EPOCH;
+    store.save_task(&older).unwrap();
+    let mut newer = store.load_task("PM-20260511-002").unwrap();
+    newer.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(1);
+    store.save_task(&newer).unwrap();
+
+    let output = helm_agent_with_home(home.path())
         .args(["task", "list"])
         .assert()
         .success()
-        .stdout(contains("PM-20260511-002"))
-        .stdout(contains("PM-20260511-001"))
-        .stdout(contains("Newer task"))
-        .stdout(contains("Older task"));
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+
+    assert!(lines[0].starts_with("PM-20260511-002\t"), "{stdout}");
+    assert!(lines[1].starts_with("PM-20260511-001\t"), "{stdout}");
+    assert!(stdout.contains("Newer task"), "{stdout}");
+    assert!(stdout.contains("Older task"), "{stdout}");
 }
 
 #[test]
@@ -579,6 +594,95 @@ fn list_tasks_filters_by_status_and_review_queue() {
         .success()
         .stdout(contains("PM-20260511-004"))
         .stdout(predicates::str::contains("PM-20260511-003").not());
+}
+
+#[test]
+fn review_queue_includes_triaged_tasks_that_require_human_attention() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-009",
+            "--title",
+            "Risky triage",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "triage",
+            "PM-20260511-009",
+            "--risk",
+            "medium",
+            "--review-reason",
+            "Touches auth flow",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list", "--review"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-009"))
+        .stdout(contains("triaged"));
+}
+
+#[test]
+fn list_tasks_hides_archived_by_default_but_allows_explicit_archived_filter() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-010",
+            "--title",
+            "Active task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-011",
+            "--title",
+            "Archived task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut archived = store.load_task("PM-20260511-011").unwrap();
+    archived.status = TaskStatus::Archived;
+    store.save_task(&archived).unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-010"))
+        .stdout(predicates::str::contains("PM-20260511-011").not());
+
+    helm_agent_with_home(home.path())
+        .args(["task", "list", "--status", "archived"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-011"))
+        .stdout(predicates::str::contains("PM-20260511-010").not());
 }
 
 #[test]
