@@ -1,4 +1,4 @@
-use crate::domain::{AgentRuntime, ReviewState, TaskEvent, TaskRecord, TaskStatus};
+use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
 use crate::paths::helm_agent_home;
@@ -36,6 +36,7 @@ enum TaskSubcommand {
     Resume(ResumeArgs),
     Dispatch(DispatchArgs),
     Mark(MarkArgs),
+    Triage(TriageArgs),
     Event(EventArgs),
     Review(ReviewArgs),
 }
@@ -92,6 +93,19 @@ struct MarkArgs {
     message: String,
 }
 
+#[derive(Debug, Args)]
+struct TriageArgs {
+    id: String,
+    #[arg(long)]
+    risk: Option<RiskArg>,
+    #[arg(long)]
+    priority: Option<PriorityArg>,
+    #[arg(long)]
+    runtime: Option<RuntimeArg>,
+    #[arg(long = "review-reason")]
+    review_reason: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, ValueEnum)]
 #[clap(rename_all = "snake_case")]
 enum StatusArg {
@@ -122,6 +136,42 @@ impl From<StatusArg> for TaskStatus {
             StatusArg::NeedsChanges => TaskStatus::NeedsChanges,
             StatusArg::Done => TaskStatus::Done,
             StatusArg::Archived => TaskStatus::Archived,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+enum RiskArg {
+    Low,
+    Medium,
+    High,
+}
+
+impl From<RiskArg> for RiskLevel {
+    fn from(value: RiskArg) -> Self {
+        match value {
+            RiskArg::Low => RiskLevel::Low,
+            RiskArg::Medium => RiskLevel::Medium,
+            RiskArg::High => RiskLevel::High,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[clap(rename_all = "snake_case")]
+enum PriorityArg {
+    Low,
+    Normal,
+    High,
+}
+
+impl PriorityArg {
+    fn as_str(self) -> &'static str {
+        match self {
+            PriorityArg::Low => "low",
+            PriorityArg::Normal => "normal",
+            PriorityArg::High => "high",
         }
     }
 }
@@ -358,6 +408,54 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 now,
             ))?;
             println!("Marked {} {}", args.id, status.as_str());
+            Ok(())
+        }
+        TaskSubcommand::Triage(args) => {
+            if args.risk.is_none()
+                && args.priority.is_none()
+                && args.runtime.is_none()
+                && args.review_reason.is_none()
+            {
+                bail!("triage requires at least one option");
+            }
+
+            let now = OffsetDateTime::now_utc();
+            let mut task = store.load_task(&args.id)?;
+            let mut changed = Vec::new();
+
+            if let Some(risk) = args.risk {
+                task.risk = RiskLevel::from(risk);
+                changed.push(format!("risk={}", task.risk.as_str()));
+                if task.risk != RiskLevel::Low {
+                    task.review.state = ReviewState::Required;
+                }
+            }
+
+            if let Some(priority) = args.priority {
+                task.priority = priority.as_str().to_string();
+                changed.push(format!("priority={}", priority.as_str()));
+            }
+
+            if let Some(runtime) = args.runtime {
+                let runtime = AgentRuntime::from(runtime);
+                task.assignment.runtime = Some(runtime);
+                changed.push(format!("runtime={}", runtime.as_str()));
+            }
+
+            if let Some(reason) = args.review_reason {
+                task.review.reason = Some(reason);
+                task.review.state = ReviewState::Required;
+                changed.push("review_reason=set".to_string());
+            }
+
+            task.status = TaskStatus::Triaged;
+            let message = format!("Triaged {}", changed.join(", "));
+            task.progress.last_event = message.clone();
+            task.progress.next_action = "Dispatch or defer task".to_string();
+            task.touch(now);
+            store.save_task(&task)?;
+            store.append_event(&TaskEvent::new(args.id.clone(), "triaged", message, now))?;
+            println!("Triaged {}", args.id);
             Ok(())
         }
         TaskSubcommand::Event(args) => {

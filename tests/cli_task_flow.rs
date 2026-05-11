@@ -667,6 +667,77 @@ fn mark_requires_one_state_and_message() {
 }
 
 #[test]
+fn triage_sets_risk_priority_runtime_and_review_reason() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-006",
+            "--title",
+            "Classify task",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "triage",
+            "PM-20260511-006",
+            "--risk",
+            "medium",
+            "--priority",
+            "high",
+            "--runtime",
+            "claude",
+            "--review-reason",
+            "Touches auth flow",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Triaged PM-20260511-006"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-006").unwrap();
+    assert_eq!(task.status, TaskStatus::Triaged);
+    assert_eq!(task.risk, RiskLevel::Medium);
+    assert_eq!(task.priority, "high");
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Claude));
+    assert_eq!(task.review.reason.as_deref(), Some("Touches auth flow"));
+    assert_eq!(task.review.state, helm_agent::domain::ReviewState::Required);
+}
+
+#[test]
+fn triage_requires_at_least_one_change() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-007",
+            "--title",
+            "No-op triage",
+            "--project",
+            "/repo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "triage", "PM-20260511-007"])
+        .assert()
+        .failure()
+        .stderr(contains("triage requires at least one option"));
+}
+
+#[test]
 fn review_requires_accept_or_request_changes() {
     let home = tempdir().unwrap();
 
