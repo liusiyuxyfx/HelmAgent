@@ -40,6 +40,7 @@ helm-agent agent prompt --runtime opencode
 - Show attach and resume commands whenever work is delegated or recovered.
 - Ask before using Codex unless the user has already approved it for the task or workspace.
 - Use `--confirm` only after approval when a real dispatch is blocked by policy, such as Codex or elevated-risk work.
+- Use `--send-brief` only on real dispatch when the human wants HelmAgent to inject the child-agent brief path into tmux.
 - Prefer free agents for small, low-risk tasks.
 
 ## Common Commands
@@ -129,6 +130,14 @@ Start a real tmux-backed child-agent session after the dry run looks correct. If
 ```bash
 helm-agent task dispatch --runtime claude --confirm PM-20260509-101
 ```
+
+`--send-brief` is opt-in. Use it on real dispatch to send the generated brief path into the child-agent tmux session:
+
+```bash
+helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief
+```
+
+If brief injection fails after tmux launch, HelmAgent keeps the session recoverable by printing attach/resume/brief output and reporting `Brief sent: no`.
 
 Start Codex only after approval:
 

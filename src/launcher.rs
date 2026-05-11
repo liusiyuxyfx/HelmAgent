@@ -100,6 +100,32 @@ impl Launcher {
         Ok(preview)
     }
 
+    pub fn send_keys(&self, session: &str, message: &str) -> Result<()> {
+        let output = Command::new(&self.tmux_bin)
+            .arg("send-keys")
+            .arg("-t")
+            .arg(format!("={session}"))
+            .arg(message)
+            .arg("Enter")
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to send keys to tmux session {session} using {}",
+                    self.tmux_bin.display()
+                )
+            })?;
+
+        if !output.status.success() {
+            bail!(
+                "failed to send keys to tmux session {session}: tmux exited with status {}{}",
+                output.status,
+                tmux_output_context(&output.stdout, &output.stderr)
+            );
+        }
+
+        Ok(())
+    }
+
     pub fn session_state(&self, session: &str) -> Result<TmuxSessionState> {
         let output = Command::new(&self.tmux_bin)
             .arg("has-session")

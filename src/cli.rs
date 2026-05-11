@@ -159,11 +159,18 @@ struct SyncArgs {
 
 #[derive(Debug, Args)]
 struct DispatchArgs {
+    /// Task id to dispatch.
     id: String,
+    /// Child-agent runtime to start.
     #[arg(long)]
     runtime: RuntimeArg,
+    /// Record the planned tmux dispatch without launching a child agent.
     #[arg(long = "dry-run")]
     dry_run: bool,
+    /// Send the generated brief path into the tmux child-agent session after real dispatch.
+    #[arg(long = "send-brief")]
+    send_brief: bool,
+    /// Confirm paid or elevated-risk real dispatch.
     #[arg(long)]
     confirm: bool,
 }
@@ -628,6 +635,9 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                     task.status.as_str()
                 );
             }
+            if args.dry_run && args.send_brief {
+                bail!("--send-brief cannot be used with --dry-run");
+            }
 
             let runtime = AgentRuntime::from(args.runtime);
             let dispatch = DispatchPlan {
@@ -675,7 +685,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 if args.dry_run {
                     "dispatch_planned"
                 } else {
-                    "dispatch_started"
+                    "dispatch_prepared"
                 },
                 launch.start_command.clone(),
                 now,
@@ -710,6 +720,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 launch.start_command.clone(),
                 now,
             );
+            let dispatch_started_recorded = store.append_event(&started_event);
             events.push(started_event.clone());
             let final_brief_path = store.brief_path(&task.id);
             task.recovery.brief_path = Some(final_brief_path.clone());
@@ -717,10 +728,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             let final_result = store
                 .save_task(&task)
                 .and_then(|()| store.write_brief(&task.id, &final_markdown))
-                .and_then(|path| {
-                    store.append_event(&started_event)?;
-                    Ok(path)
-                });
+                .map(|path| (path, dispatch_started_recorded));
 
             println!("Started {}", args.id);
             println!("Start: {}", launch.start_command);
@@ -732,8 +740,14 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                     .as_deref()
                     .unwrap_or("No native resume command recorded")
             );
-            match final_result {
-                Ok(brief_path) => println!("Brief: {}", brief_path.display()),
+            let active_brief_path = match final_result {
+                Ok((brief_path, dispatch_started_recorded)) => {
+                    if let Err(error) = dispatch_started_recorded {
+                        eprintln!("Warning: Dispatch started but event record failed: {error:#}");
+                    }
+                    println!("Brief: {}", brief_path.display());
+                    brief_path
+                }
                 Err(error) => {
                     let message =
                         format!("Dispatch state update failed after tmux start: {error:#}");
@@ -745,6 +759,37 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                     ));
                     println!("Brief: {}", prepared_brief_path.display());
                     eprintln!("Warning: {message}");
+                    prepared_brief_path
+                }
+            };
+            if args.send_brief {
+                let handoff = format!(
+                    "Use this HelmAgent child-agent brief before starting work:\n{}",
+                    active_brief_path.display()
+                );
+                match launcher.send_keys(&launch.tmux_session, &handoff) {
+                    Ok(()) => {
+                        if let Err(error) = store.append_event(&TaskEvent::new(
+                            args.id.clone(),
+                            "brief_sent",
+                            format!("Brief sent {}", active_brief_path.display()),
+                            now,
+                        )) {
+                            eprintln!("Warning: Brief sent but event record failed: {error:#}");
+                        }
+                        println!("Brief sent: yes");
+                    }
+                    Err(error) => {
+                        let message = format!("Brief send failed after tmux start: {error:#}");
+                        let _ = store.append_event(&TaskEvent::new(
+                            args.id.clone(),
+                            "brief_send_warning",
+                            message.clone(),
+                            now,
+                        ));
+                        println!("Brief sent: no");
+                        eprintln!("Warning: {message}");
+                    }
                 }
             }
             Ok(())

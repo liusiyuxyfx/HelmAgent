@@ -29,6 +29,17 @@ fn fake_tmux_script(path: &Path, record_path: &Path) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn failing_tmux_script(path: &Path) {
+    fs::write(
+        path,
+        "#!/bin/sh\nprintf '%s\\n' 'tmux failed before launch' >&2\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn fake_tmux_chmod_script(path: &Path, record_path: &Path, chmod_path: &Path) {
     let record_path = record_path.display().to_string().replace('\'', "'\\''");
     let chmod_path = chmod_path.display().to_string().replace('\'', "'\\''");
@@ -36,6 +47,21 @@ fn fake_tmux_chmod_script(path: &Path, record_path: &Path, chmod_path: &Path) {
         path,
         format!(
             "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone > '{record_path}'\nchmod 444 '{chmod_path}'\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+fn fake_tmux_append_script(path: &Path, record_path: &Path, fail_send_keys: bool) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    let fail_send_keys = if fail_send_keys { "true" } else { "false" };
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' CALL >> '{record_path}'\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone >> '{record_path}'\nif [ \"$1\" = send-keys ] && {fail_send_keys}; then\n  printf '%s\\n' 'send-keys failed' >&2\n  exit 8\nfi\n"
         ),
     )
     .unwrap();
@@ -725,12 +751,76 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         event.message,
         "tmux new-session -d -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude"
     );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "dispatch_prepared")
+            .count(),
+        1
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| event.event_type == "dispatch_started")
+            .count(),
+        1
+    );
 
     helm_agent_with_home(home.path())
         .args(["task", "status", "PM-20260509-006"])
         .assert()
         .success()
         .stdout(contains("[running]"));
+}
+
+#[test]
+fn real_dispatch_failed_tmux_launch_records_prepared_not_started() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("failing-tmux");
+    failing_tmux_script(&tmux_bin);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-LAUNCH-FAIL",
+            "--title",
+            "Dispatch launch failure",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-LAUNCH-FAIL",
+            "--runtime",
+            "claude",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("tmux failed before launch"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-LAUNCH-FAIL").unwrap();
+    assert_eq!(task.status, TaskStatus::Queued);
+    assert_eq!(task.progress.last_event, "Dispatch prepared");
+    let events = store.read_events("PM-20260511-LAUNCH-FAIL").unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "dispatch_prepared"));
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event_type == "dispatch_started"),
+        "{events:?}"
+    );
 }
 
 #[test]
@@ -821,6 +911,163 @@ fn real_dispatch_prints_recovery_when_postlaunch_state_update_fails() {
     assert_eq!(task.status, TaskStatus::Queued);
     assert_eq!(task.progress.last_event, "Dispatch prepared");
     assert!(task.recovery.brief_path.is_some());
+    let events = store.read_events("PM-20260511-POST").unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "dispatch_prepared"));
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "dispatch_started"),
+        "{events:?}"
+    );
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "dispatch_state_warning"));
+}
+
+#[test]
+fn send_brief_dry_run_is_rejected_before_tmux_launch() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_append_script(&tmux_bin, &record_path, false);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-SEND-DRY",
+            "--title",
+            "Reject send brief dry run",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-SEND-DRY",
+            "--runtime",
+            "claude",
+            "--dry-run",
+            "--send-brief",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("--send-brief cannot be used with --dry-run"));
+
+    assert!(!record_path.exists());
+}
+
+#[test]
+fn send_brief_real_dispatch_sends_brief_path_and_records_event() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_append_script(&tmux_bin, &record_path, false);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-SEND",
+            "--title",
+            "Send child brief",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-SEND",
+            "--runtime",
+            "claude",
+            "--send-brief",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260511-SEND"))
+        .stdout(contains("Brief: "))
+        .stdout(contains("Brief sent: yes"));
+
+    let record = fs::read_to_string(&record_path).unwrap();
+    assert!(record.contains("CALL\nnew-session\n-d\n-s\nhelm-agent-PM-20260511-SEND-claude"));
+    assert!(record.contains("CALL\nsend-keys\n-t\n=helm-agent-PM-20260511-SEND-claude"));
+    assert!(record.contains("Use this HelmAgent child-agent brief before starting work:"));
+    assert!(record.contains("sessions/PM-20260511-SEND/brief.md"));
+    assert!(record.ends_with("Enter\n"), "{record}");
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let events = store.read_events("PM-20260511-SEND").unwrap();
+    assert!(events
+        .iter()
+        .any(|event| { event.event_type == "brief_sent" && event.message.contains("brief.md") }));
+}
+
+#[test]
+fn send_brief_failure_after_launch_keeps_recovery_available() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_append_script(&tmux_bin, &record_path, true);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-SEND-FAIL",
+            "--title",
+            "Send child brief failure",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-SEND-FAIL",
+            "--runtime",
+            "claude",
+            "--send-brief",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260511-SEND-FAIL"))
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260511-SEND-FAIL-claude",
+        ))
+        .stdout(contains("Brief: "))
+        .stdout(contains("Brief sent: no"))
+        .stderr(contains("Warning: Brief send failed after tmux start"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-SEND-FAIL").unwrap();
+    assert_eq!(task.status, TaskStatus::Running);
+    assert!(task.recovery.brief_path.is_some());
+    let events = store.read_events("PM-20260511-SEND-FAIL").unwrap();
+    assert!(events.iter().any(|event| {
+        event.event_type == "brief_send_warning" && event.message.contains("send-keys failed")
+    }));
 }
 
 #[test]
@@ -1151,6 +1398,25 @@ fn sync_help_and_missing_target_explain_target_modes() {
         .assert()
         .failure()
         .stderr(contains("sync requires exactly one target: <id> or --all"));
+}
+
+#[test]
+fn dispatch_help_explains_dispatch_flags() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "dispatch", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Task id to dispatch"))
+        .stdout(contains("Child-agent runtime to start"))
+        .stdout(contains(
+            "Record the planned tmux dispatch without launching a child agent",
+        ))
+        .stdout(contains(
+            "Send the generated brief path into the tmux child-agent session",
+        ))
+        .stdout(contains("Confirm paid or elevated-risk real dispatch"));
 }
 
 #[test]
@@ -2179,6 +2445,7 @@ fn main_agent_template_contains_required_operating_commands() {
         "helm-agent task sync",
         "helm-agent task brief",
         "helm-agent task dispatch --dry-run",
+        "--send-brief",
         "helm-agent task mark",
         "task review --accept",
         "--confirm",
@@ -2239,4 +2506,51 @@ fn main_agent_guide_uses_consistent_common_task_id_for_brief_flow() {
     ] {
         assert!(guide.contains(required), "missing `{required}`:\n{guide}");
     }
+}
+
+#[test]
+fn docs_cover_send_brief_as_opt_in_real_dispatch() {
+    let readme = fs::read_to_string("README.md").unwrap();
+    let guide = fs::read_to_string("docs/agent-integrations/main-agent.md").unwrap();
+    let template = fs::read_to_string("docs/agent-integrations/main-agent-template.md").unwrap();
+    let combined = format!("{readme}\n{guide}\n{template}");
+
+    for required in [
+        "helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief",
+        "helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief",
+        "helm-agent task dispatch PM-YYYYMMDD-001 --runtime claude --send-brief",
+        "`--send-brief` is opt-in",
+        "Brief sent: no",
+    ] {
+        assert!(
+            combined.contains(required),
+            "missing `{required}` from docs:\n{combined}"
+        );
+    }
+}
+
+#[test]
+fn send_brief_docs_keep_ids_consistent_per_document() {
+    let readme = fs::read_to_string("README.md").unwrap();
+    let template = fs::read_to_string("docs/agent-integrations/main-agent-template.md").unwrap();
+
+    assert!(
+        readme.contains("helm-agent task brief PM-20260511-001 --write")
+            && readme
+                .contains("helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief"),
+        "{readme}"
+    );
+    assert!(
+        !readme.contains("helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief"),
+        "{readme}"
+    );
+    assert!(
+        template.contains("helm-agent task dispatch PM-YYYYMMDD-001 --runtime claude --send-brief"),
+        "{template}"
+    );
+    assert!(
+        !template
+            .contains("helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief"),
+        "{template}"
+    );
 }

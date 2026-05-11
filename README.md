@@ -115,6 +115,14 @@ helm-agent task brief PM-20260511-001 --write
 
 Dry-run and real dispatch write the same brief automatically under the task session directory and show its path in `status`, `resume`, and `board`.
 
+`--send-brief` is opt-in for real tmux dispatch. It sends the brief path into the child-agent tmux session after launch:
+
+```bash
+helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
+```
+
+If tmux launch succeeds but brief injection fails, HelmAgent still prints attach/resume/brief recovery output and reports `Brief sent: no`.
+
 Mark real task state:
 
 ```bash

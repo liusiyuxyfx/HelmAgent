@@ -35,6 +35,14 @@ helm-agent task dispatch --runtime codex --confirm PM-YYYYMMDD-001
 helm-agent task dispatch --runtime claude --confirm PM-YYYYMMDD-001
 ```
 
+- `--send-brief` is opt-in. Use it only on real dispatch when the brief path should be injected into tmux:
+
+```bash
+helm-agent task dispatch PM-YYYYMMDD-001 --runtime claude --send-brief
+```
+
+- If brief injection reports `Brief sent: no`, use the printed attach/resume/brief paths for manual recovery.
+
 - After delegation, show the attach and resume commands from dispatch output or:
 
 ```bash

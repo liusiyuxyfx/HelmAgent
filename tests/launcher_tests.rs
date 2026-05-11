@@ -256,6 +256,41 @@ fn launch_error_includes_tmux_output_and_session_name() {
 }
 
 #[test]
+fn send_keys_invokes_tmux_with_literal_message_and_enter() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    Launcher::with_tmux_bin(tmux_bin)
+        .send_keys(
+            "helm-agent-PM-20260511-SEND-claude",
+            "Use brief\n/path/to/brief.md",
+        )
+        .unwrap();
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "send-keys\n-t\n=helm-agent-PM-20260511-SEND-claude\nUse brief\n/path/to/brief.md\nEnter\n"
+    );
+}
+
+#[test]
+fn send_keys_error_includes_tmux_output_and_session_name() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("failing-tmux");
+    failing_tmux_script(&tmux_bin);
+
+    let error = Launcher::with_tmux_bin(tmux_bin)
+        .send_keys("helm-agent-PM-20260511-FAIL-claude", "Use brief")
+        .unwrap_err()
+        .to_string();
+
+    assert!(error.contains("helm-agent-PM-20260511-FAIL-claude"));
+    assert!(error.contains("tmux failed: duplicate session"));
+}
+
+#[test]
 fn session_state_invokes_tmux_has_session() {
     let temp = tempdir().unwrap();
     let tmux_bin = temp.path().join("fake-tmux");
