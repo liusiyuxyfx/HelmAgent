@@ -9,11 +9,13 @@ Provide an open-source style installation surface for HelmAgent that covers inst
 Remote usage:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- install
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- update
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- repair
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- doctor
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- uninstall
+INSTALLER=/tmp/helm-agent-install.sh
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" install
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" update
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" repair
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" doctor
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" uninstall
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" init-project /path/to/project
 ```
 
 Local usage:
@@ -44,17 +46,20 @@ make uninstall-purge
 - Shell: POSIX `sh`.
 - Default repository: `https://github.com/liusiyuxyfx/HelmAgent.git`.
 - Default data directory: `$HOME/.helm-agent`.
+- Default Cargo install root: `$HOME/.cargo`.
 - Env file: `$HOME/.helm-agent/env`.
 - Main-agent template file: `$HOME/.helm-agent/main-agent-template.md`.
 - Binary installation uses:
 
 ```bash
-cargo install --git "$HELM_AGENT_REPO" --locked --force
+cargo install --git "$HELM_AGENT_REPO" --locked --force --root "$HELM_AGENT_CARGO_ROOT"
+cargo install --path "$(repo_root)" --locked --force --root "$HELM_AGENT_CARGO_ROOT"
 ```
 
 - `HELM_AGENT_REPO` can override the Git remote.
 - `HELM_AGENT_HOME` can override the data directory.
-- `HELM_AGENT_BIN_DIR` can override the binary directory used for PATH diagnostics; default is `$HOME/.cargo/bin`.
+- `HELM_AGENT_CARGO_ROOT` can override the Cargo install root; default is `$HOME/.cargo`.
+- `HELM_AGENT_BIN_DIR` can override the binary directory used for env and PATH diagnostics; default is `$HELM_AGENT_CARGO_ROOT/bin`.
 - `HELM_AGENT_TEMPLATE_URL` can override the template download URL when running from a piped installer instead of a local checkout.
 - `--dry-run` prints planned operations and does not mutate files or run cargo.
 
@@ -81,6 +86,7 @@ export PATH="$HOME/.cargo/bin:$PATH"
 - Ensure `$HELM_AGENT_HOME` exists.
 - Refresh `$HELM_AGENT_HOME/main-agent-template.md`.
 - Run cargo install with `--force`.
+- Local checkouts install from the checked-out path; downloaded installers install from `HELM_AGENT_REPO`.
 - Do not modify task data.
 - Re-run `helm-agent --help` when the binary is available.
 
@@ -103,7 +109,8 @@ export PATH="$HOME/.cargo/bin:$PATH"
 - Run `cargo uninstall helm-agent`.
 - Keep `$HELM_AGENT_HOME` by default.
 - With `--purge`, remove `$HELM_AGENT_HOME`.
-- Refuse unsafe purge paths such as `/`, `.`, `..`, and `$HOME`.
+- Refuse custom purge paths unless `HELM_AGENT_ALLOW_CUSTOM_PURGE=1` is set.
+- Even with custom purge enabled, refuse unsafe paths such as `/`, `.`, `..`, `$HOME`, missing-parent paths, relative paths, and leading `-` operands.
 
 ### `init-project <path>`
 

@@ -7,16 +7,18 @@ HelmAgent is a local coordination CLI for coding agents with task records, tmux 
 Install from GitHub:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- install
+INSTALLER=/tmp/helm-agent-install.sh
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" install
 ```
 
 Update, repair, diagnose, and uninstall:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- update
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- repair
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- doctor
-curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh | sh -s -- uninstall
+INSTALLER=/tmp/helm-agent-install.sh
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" update
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" repair
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" doctor
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" uninstall
 ```
 
 Local checkout:
@@ -34,6 +36,8 @@ See [Install Guide](docs/install.md) for `--dry-run`, `--purge`, `init-project`,
 Initialize one project after install:
 
 ```bash
+INSTALLER=/tmp/helm-agent-install.sh
+curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" init-project /path/to/project
 sh ./install.sh init-project /path/to/project
 ```
 

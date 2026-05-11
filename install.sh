@@ -2,9 +2,11 @@
 set -eu
 
 DEFAULT_REPO="https://github.com/liusiyuxyfx/HelmAgent.git"
+HELM_AGENT_REPO_OVERRIDE="${HELM_AGENT_REPO+x}"
 HELM_AGENT_REPO="${HELM_AGENT_REPO:-$DEFAULT_REPO}"
 HELM_AGENT_HOME="${HELM_AGENT_HOME:-$HOME/.helm-agent}"
-HELM_AGENT_BIN_DIR="${HELM_AGENT_BIN_DIR:-$HOME/.cargo/bin}"
+HELM_AGENT_CARGO_ROOT="${HELM_AGENT_CARGO_ROOT:-${CARGO_INSTALL_ROOT:-$HOME/.cargo}}"
+HELM_AGENT_BIN_DIR="${HELM_AGENT_BIN_DIR:-$HELM_AGENT_CARGO_ROOT/bin}"
 HELM_AGENT_ENV_FILE="$HELM_AGENT_HOME/env"
 HELM_AGENT_TEMPLATE_FILE="$HELM_AGENT_HOME/main-agent-template.md"
 HELM_AGENT_TEMPLATE_URL="${HELM_AGENT_TEMPLATE_URL:-https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/docs/agent-integrations/main-agent-template.md}"
@@ -23,8 +25,10 @@ Usage:
 
 Environment:
   HELM_AGENT_REPO      Git repository to install from
+  HELM_AGENT_ALLOW_CUSTOM_PURGE=1  Allow --purge outside the default data directory
   HELM_AGENT_HOME      Data directory, default: $HOME/.helm-agent
-  HELM_AGENT_BIN_DIR   Binary directory for PATH checks, default: $HOME/.cargo/bin
+  HELM_AGENT_CARGO_ROOT  Cargo install root, default: $HOME/.cargo
+  HELM_AGENT_BIN_DIR   PATH/diagnostic binary directory, default: $HELM_AGENT_CARGO_ROOT/bin
   HELM_AGENT_TEMPLATE_URL  URL used when local template file is unavailable
 USAGE
 }
@@ -120,7 +124,15 @@ escape_double_quoted() {
 }
 
 cargo_install() {
-    run cargo install --git "$HELM_AGENT_REPO" --locked --force
+    if [ -z "$HELM_AGENT_REPO_OVERRIDE" ] && is_local_checkout; then
+        run cargo install --path "$(repo_root)" --locked --force --root "$HELM_AGENT_CARGO_ROOT"
+    else
+        run cargo install --git "$HELM_AGENT_REPO" --locked --force --root "$HELM_AGENT_CARGO_ROOT"
+    fi
+}
+
+is_default_home() {
+    [ "$HELM_AGENT_HOME" = "$HOME/.helm-agent" ]
 }
 
 cargo_uninstall() {
@@ -134,8 +146,8 @@ cargo_uninstall() {
         exit 1
     fi
 
-    if cargo install --list | grep -q '^helm-agent '; then
-        run cargo uninstall helm-agent
+    if cargo install --list --root "$HELM_AGENT_CARGO_ROOT" | grep -q '^helm-agent '; then
+        run cargo uninstall helm-agent --root "$HELM_AGENT_CARGO_ROOT"
     else
         log "ok: helm-agent is not installed"
     fi
@@ -144,10 +156,7 @@ cargo_uninstall() {
 install_template() {
     root="$(repo_root)"
     local_template="$root/docs/agent-integrations/main-agent-template.md"
-    if [ -f "$root/install.sh" ] &&
-        [ -f "$root/Cargo.toml" ] &&
-        grep -q '^name = "helm-agent"' "$root/Cargo.toml" &&
-        [ -f "$local_template" ]; then
+    if is_local_checkout && [ -f "$local_template" ]; then
         plan "install template $HELM_AGENT_TEMPLATE_FILE"
         if [ "$DRY_RUN" -eq 0 ]; then
             mkdir -p "$HELM_AGENT_HOME"
@@ -182,12 +191,42 @@ GUIDANCE
 }
 
 repo_root() {
-    script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" 2>/dev/null && pwd)
+    script_path=$0
+    case "$script_path" in
+        */*) [ -f "$script_path" ] || { pwd; return 0; } ;;
+        *)
+            if [ ! -f "$script_path" ]; then
+                pwd
+                return 0
+            fi
+            ;;
+    esac
+    script_dir=$(CDPATH= cd -- "$(dirname -- "$script_path")" 2>/dev/null && pwd)
     printf '%s\n' "$script_dir"
 }
 
+is_local_checkout() {
+    script_path=$0
+    script_base=$(basename -- "$script_path")
+    [ "$script_base" = "install.sh" ] || return 1
+
+    case "$script_path" in
+        */*) [ -f "$script_path" ] || return 1 ;;
+        *)
+            [ -f "$script_path" ] || return 1
+            ;;
+    esac
+
+    root="$(repo_root)"
+    [ -f "$root/install.sh" ] &&
+        [ -f "$root/Cargo.toml" ] &&
+        grep -q '^name = "helm-agent"' "$root/Cargo.toml"
+}
+
 run_help_check() {
-    if have helm-agent; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+        plan "helm-agent --help"
+    elif have helm-agent; then
         run helm-agent --help
     else
         plan "helm-agent --help"
@@ -214,8 +253,65 @@ update_cmd() {
 
 assert_safe_purge_path() {
     case "$HELM_AGENT_HOME" in
-        "" | "/" | "." | ".." | "$HOME" | "$HOME/")
+        /*) ;;
+        *)
             log "refusing to purge unsafe HELM_AGENT_HOME: $HELM_AGENT_HOME"
+            exit 1
+            ;;
+    esac
+
+    target_base=$(basename -- "$HELM_AGENT_HOME")
+    case "$HELM_AGENT_HOME" in
+        "/" | */. | */./* | */.. | */../*)
+            log "refusing to purge unsafe HELM_AGENT_HOME: $HELM_AGENT_HOME"
+            exit 1
+            ;;
+    esac
+
+    case "$target_base" in
+        "" | "." | ".." | -*)
+            log "refusing to purge unsafe HELM_AGENT_HOME: $HELM_AGENT_HOME"
+            exit 1
+            ;;
+    esac
+
+    if is_default_home; then
+        return 0
+    fi
+
+    target_parent=$(dirname -- "$HELM_AGENT_HOME")
+    if [ ! -d "$target_parent" ]; then
+        log "refusing to purge path with missing parent: $HELM_AGENT_HOME"
+        exit 1
+    fi
+
+    target_parent_real=$(CDPATH= cd -- "$target_parent" 2>/dev/null && pwd -P)
+    target_real="$target_parent_real/$target_base"
+    home_real=$(CDPATH= cd -- "$HOME" 2>/dev/null && pwd -P)
+
+    case "$target_real" in
+        "/" | "$home_real" | "$home_real/" | "$home_real/.." | "$home_real/." | "$home_real/../"*)
+            log "refusing to purge unsafe HELM_AGENT_HOME: $HELM_AGENT_HOME"
+            exit 1
+            ;;
+    esac
+
+    case "$home_real/" in
+        "$target_real"/*)
+            log "refusing to purge unsafe HELM_AGENT_HOME: $HELM_AGENT_HOME"
+            exit 1
+            ;;
+    esac
+
+    if [ "${HELM_AGENT_ALLOW_CUSTOM_PURGE:-0}" != "1" ]; then
+        log "refusing to purge custom HELM_AGENT_HOME without HELM_AGENT_ALLOW_CUSTOM_PURGE=1: $HELM_AGENT_HOME"
+        exit 1
+    fi
+
+    case "$target_base" in
+        .helm-agent | helm-agent | helm-agent-* | *helm-agent*) ;;
+        *)
+            log "refusing to purge non-HelmAgent path: $HELM_AGENT_HOME"
             exit 1
             ;;
     esac
@@ -276,7 +372,9 @@ doctor_cmd() {
         status=1
     fi
 
-    if have helm-agent; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+        plan "helm-agent task board"
+    elif have helm-agent; then
         if helm-agent task board >/dev/null 2>&1; then
             log "ok: helm-agent task board"
         else
@@ -295,19 +393,16 @@ doctor_cmd() {
 }
 
 repair_cmd() {
+    require_tools
     ensure_home
     write_env
     install_template
-    if have helm-agent; then
-        log "ok: helm-agent already installed"
-    else
-        cargo_install
-    fi
+    cargo_install
     doctor_cmd
 }
 
 uninstall_cmd() {
-    if [ "$PURGE" -eq 1 ] && [ "$DRY_RUN" -eq 0 ]; then
+    if [ "$PURGE" -eq 1 ]; then
         assert_safe_purge_path
     fi
 
@@ -315,7 +410,7 @@ uninstall_cmd() {
     if [ "$PURGE" -eq 1 ]; then
         plan "remove data $HELM_AGENT_HOME"
         if [ "$DRY_RUN" -eq 0 ]; then
-            rm -rf "$HELM_AGENT_HOME"
+            rm -rf -- "$HELM_AGENT_HOME"
         fi
     else
         log "keep data $HELM_AGENT_HOME"

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep runtime HelmAgent unchanged. Add a POSIX shell installer with safe dry-run behavior, a Makefile as local command sugar, install documentation, and integration tests that exercise installer dry-run output without mutating the host. Install reusable coordinator instructions under `HELM_AGENT_HOME` so project setup does not depend on a checked-out repository path.
 
-**Tech Stack:** POSIX `sh`, Rust integration tests, Cargo install, Makefile.
+**Tech Stack:** POSIX `sh`, Rust integration tests, Cargo install via Git or local path, Makefile.
 
 ---
 

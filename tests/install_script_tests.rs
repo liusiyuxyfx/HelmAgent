@@ -1,4 +1,5 @@
-use std::process::Command;
+use std::fs::File;
+use std::process::{Command, Stdio};
 use tempfile::tempdir;
 
 fn run_install_script(args: &[&str]) -> (bool, String, String) {
@@ -19,18 +20,29 @@ fn run_install_script_with_env(args: &[&str], envs: &[(&str, &str)]) -> (bool, S
     )
 }
 
+fn run_install_script_from_stdin(args: &[&str]) -> (bool, String, String) {
+    let output = Command::new("sh")
+        .arg("-s")
+        .arg("--")
+        .args(args)
+        .stdin(Stdio::from(File::open("install.sh").unwrap()))
+        .output()
+        .expect("run install.sh from stdin");
+    (
+        output.status.success(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
 #[test]
 fn install_dry_run_prints_install_steps() {
     let (success, stdout, stderr) = run_install_script(&["install", "--dry-run"]);
 
     assert!(success, "{stdout}\n{stderr}");
     assert!(stdout.contains("DRY-RUN"), "{stdout}");
-    assert!(
-        stdout.contains(
-            "cargo install --git https://github.com/liusiyuxyfx/HelmAgent.git --locked --force"
-        ),
-        "{stdout}"
-    );
+    assert!(stdout.contains("cargo install --path"), "{stdout}");
+    assert!(stdout.contains("--locked --force --root"), "{stdout}");
     assert!(stdout.contains("write env"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
     assert!(stdout.contains("main-agent-template.md"), "{stdout}");
@@ -38,11 +50,50 @@ fn install_dry_run_prints_install_steps() {
 }
 
 #[test]
+fn install_dry_run_uses_git_when_repo_override_is_set() {
+    let (success, stdout, stderr) = run_install_script_with_env(
+        &["install", "--dry-run"],
+        &[("HELM_AGENT_REPO", "https://example.invalid/HelmAgent.git")],
+    );
+
+    assert!(success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains(
+            "cargo install --git https://example.invalid/HelmAgent.git --locked --force --root"
+        ),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn stdin_install_dry_run_uses_git_not_local_checkout() {
+    let (success, stdout, stderr) = run_install_script_from_stdin(&["install", "--dry-run"]);
+
+    assert!(success, "{stdout}\n{stderr}");
+    assert!(stdout.contains("cargo install --git"), "{stdout}");
+    assert!(!stdout.contains("cargo install --path"), "{stdout}");
+}
+
+#[test]
+fn install_dry_run_uses_custom_cargo_root_for_install_and_path() {
+    let root = tempdir().unwrap();
+    let root_path = root.path().to_string_lossy().to_string();
+
+    let (success, stdout, stderr) = run_install_script_with_env(
+        &["install", "--dry-run"],
+        &[("HELM_AGENT_CARGO_ROOT", root_path.as_str())],
+    );
+
+    assert!(success, "{stdout}\n{stderr}");
+    assert!(stdout.contains(&format!("--root {root_path}")), "{stdout}");
+}
+
+#[test]
 fn update_dry_run_reinstalls_without_data_deletion() {
     let (success, stdout, stderr) = run_install_script(&["update", "--dry-run"]);
 
     assert!(success, "{stdout}\n{stderr}");
-    assert!(stdout.contains("cargo install --git"), "{stdout}");
+    assert!(stdout.contains("cargo install --path"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
     assert!(!stdout.contains("remove data"), "{stdout}");
 }
@@ -54,6 +105,7 @@ fn repair_dry_run_recreates_env_and_runs_doctor() {
     assert!(success, "{stdout}\n{stderr}");
     assert!(stdout.contains("write env"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
+    assert!(stdout.contains("cargo install --path"), "{stdout}");
     assert!(stdout.contains("doctor"), "{stdout}");
 }
 
@@ -87,6 +139,96 @@ fn uninstall_purge_refuses_unsafe_home_before_mutation() {
         "{stdout}"
     );
     assert!(!stdout.contains("cargo uninstall helm-agent"), "{stdout}");
+}
+
+#[test]
+fn uninstall_purge_refuses_parent_alias_even_with_custom_confirmation() {
+    let home_alias = format!("{}/..", std::env::var("HOME").unwrap());
+    let (success, stdout, stderr) = run_install_script_with_env(
+        &["uninstall", "--purge"],
+        &[
+            ("HELM_AGENT_HOME", home_alias.as_str()),
+            ("HELM_AGENT_ALLOW_CUSTOM_PURGE", "1"),
+        ],
+    );
+
+    assert!(!success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("refusing to purge unsafe HELM_AGENT_HOME"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("cargo uninstall helm-agent"), "{stdout}");
+}
+
+#[test]
+fn uninstall_purge_refuses_relative_home_even_with_custom_confirmation() {
+    let (success, stdout, stderr) = run_install_script_with_env(
+        &["uninstall", "--purge"],
+        &[
+            ("HELM_AGENT_HOME", "relative-helm-agent"),
+            ("HELM_AGENT_ALLOW_CUSTOM_PURGE", "1"),
+        ],
+    );
+
+    assert!(!success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("refusing to purge unsafe HELM_AGENT_HOME"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("cargo uninstall helm-agent"), "{stdout}");
+}
+
+#[test]
+fn uninstall_purge_refuses_custom_home_without_extra_confirmation() {
+    let home = tempdir().unwrap();
+    let home_path = home.path().to_string_lossy().to_string();
+
+    let (success, stdout, stderr) = run_install_script_with_env(
+        &["uninstall", "--purge"],
+        &[("HELM_AGENT_HOME", home_path.as_str())],
+    );
+
+    assert!(!success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("refusing to purge custom HELM_AGENT_HOME"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("cargo uninstall helm-agent"), "{stdout}");
+}
+
+#[test]
+fn doctor_dry_run_does_not_execute_helm_agent() {
+    let bin_dir = tempdir().unwrap();
+    let sentinel = bin_dir.path().join("executed");
+    let fake_helm_agent = bin_dir.path().join("helm-agent");
+    std::fs::write(
+        &fake_helm_agent,
+        format!(
+            "#!/bin/sh\nprintf executed > '{}'\n",
+            sentinel.to_string_lossy()
+        ),
+    )
+    .unwrap();
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&fake_helm_agent).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_helm_agent, perms).unwrap();
+    }
+
+    let existing_path = std::env::var("PATH").unwrap();
+    let path = format!("{}:{existing_path}", bin_dir.path().to_string_lossy());
+    let (success, stdout, stderr) =
+        run_install_script_with_env(&["doctor", "--dry-run"], &[("PATH", path.as_str())]);
+
+    assert!(success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains("DRY-RUN: helm-agent task board"),
+        "{stdout}"
+    );
+    assert!(!sentinel.exists(), "{stdout}");
 }
 
 #[test]
@@ -147,17 +289,20 @@ fn install_docs_cover_core_lifecycle_commands() {
     let combined = format!("{readme}\n{guide}");
 
     for required in [
-        "install.sh | sh -s -- install",
-        "install.sh | sh -s -- update",
-        "install.sh | sh -s -- repair",
-        "install.sh | sh -s -- doctor",
-        "install.sh | sh -s -- uninstall",
+        "-o \"$INSTALLER\" && sh \"$INSTALLER\" install",
+        "-o \"$INSTALLER\" && sh \"$INSTALLER\" update",
+        "-o \"$INSTALLER\" && sh \"$INSTALLER\" repair",
+        "-o \"$INSTALLER\" && sh \"$INSTALLER\" doctor",
+        "-o \"$INSTALLER\" && sh \"$INSTALLER\" uninstall",
+        "-o \"$INSTALLER\" && sh \"$INSTALLER\" init-project",
         "install --dry-run",
         "uninstall --purge",
         "init-project",
         "HELM_AGENT_HOME",
+        "HELM_AGENT_CARGO_ROOT",
         "HELM_AGENT_TEMPLATE_URL",
         "main-agent-template.md",
+        "@$HOME/.helm-agent/main-agent-template.md",
     ] {
         assert!(
             combined.contains(required),
