@@ -1,6 +1,7 @@
 use crate::paths::helm_agent_home;
 use anyhow::{bail, Context, Result};
-use std::fs;
+use std::fs::{self, Metadata, OpenOptions};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 pub const MAIN_AGENT_TEMPLATE_FILE: &str = "main-agent-template.md";
@@ -49,7 +50,7 @@ impl From<&GuidanceFile> for GuidanceFile {
 }
 
 pub fn installed_main_agent_template_path() -> Result<PathBuf> {
-    Ok(helm_agent_home()?.join(MAIN_AGENT_TEMPLATE_FILE))
+    Ok(canonical_helm_agent_home()?.join(MAIN_AGENT_TEMPLATE_FILE))
 }
 
 pub fn fallback_main_agent_template_path() -> PathBuf {
@@ -58,10 +59,7 @@ pub fn fallback_main_agent_template_path() -> PathBuf {
 
 pub fn main_agent_template_path() -> Result<PathBuf> {
     let installed = installed_main_agent_template_path()?;
-    if installed
-        .try_exists()
-        .with_context(|| format!("check installed template {}", installed.display()))?
-    {
+    if installed_template_exists(&installed)? {
         return Ok(installed);
     }
 
@@ -70,12 +68,8 @@ pub fn main_agent_template_path() -> Result<PathBuf> {
 
 pub fn read_main_agent_template() -> Result<String> {
     let installed = installed_main_agent_template_path()?;
-    if installed
-        .try_exists()
-        .with_context(|| format!("check installed template {}", installed.display()))?
-    {
-        return fs::read_to_string(&installed)
-            .with_context(|| format!("read main-agent template {}", installed.display()));
+    if installed_template_exists(&installed)? {
+        return read_existing_template_file(&installed);
     }
 
     Ok(BUNDLED_MAIN_AGENT_TEMPLATE.to_string())
@@ -83,19 +77,11 @@ pub fn read_main_agent_template() -> Result<String> {
 
 pub fn ensure_installed_main_agent_template() -> Result<PathBuf> {
     let installed = installed_main_agent_template_path()?;
-    if installed
-        .try_exists()
-        .with_context(|| format!("check installed template {}", installed.display()))?
-    {
+    if installed_template_exists(&installed)? {
         return Ok(installed);
     }
 
-    if let Some(parent) = installed.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("create template directory {}", parent.display()))?;
-    }
-    fs::write(&installed, BUNDLED_MAIN_AGENT_TEMPLATE)
-        .with_context(|| format!("write installed template {}", installed.display()))?;
+    write_new_installed_template(&installed)?;
     Ok(installed)
 }
 
@@ -180,6 +166,127 @@ fn reject_symlink_guidance_file(target_path: &Path) -> Result<()> {
             Err(error).with_context(|| format!("inspect guidance file {}", target_path.display()))
         }
     }
+}
+
+fn canonical_helm_agent_home() -> Result<PathBuf> {
+    let home = helm_agent_home()?;
+    if !home.is_absolute() {
+        bail!("HELM_AGENT_HOME must be absolute: {}", home.display());
+    }
+
+    fs::create_dir_all(&home)
+        .with_context(|| format!("create HelmAgent home {}", home.display()))?;
+    let canonical = home
+        .canonicalize()
+        .with_context(|| format!("canonicalize HelmAgent home {}", home.display()))?;
+    let metadata = fs::metadata(&canonical)
+        .with_context(|| format!("inspect HelmAgent home {}", canonical.display()))?;
+    if !metadata.is_dir() {
+        bail!(
+            "HELM_AGENT_HOME is not a directory: {}",
+            canonical.display()
+        );
+    }
+
+    Ok(canonical)
+}
+
+fn installed_template_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            validate_installed_template_file(path, &metadata)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect main-agent template {}", path.display()))
+        }
+    }
+}
+
+fn validate_installed_template_file(path: &Path, metadata: &Metadata) -> Result<()> {
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        bail!(
+            "refuse to use symlink main-agent template {}",
+            path.display()
+        );
+    }
+    if !file_type.is_file() {
+        bail!(
+            "refuse to use non-file main-agent template {}",
+            path.display()
+        );
+    }
+
+    let home = canonical_helm_agent_home()?;
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("canonicalize main-agent template {}", path.display()))?;
+    if !canonical.starts_with(&home) {
+        bail!(
+            "refuse to use main-agent template outside HelmAgent home: {}",
+            canonical.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn write_new_installed_template(path: &Path) -> Result<()> {
+    match create_new_template_file(path) {
+        Ok(mut file) => file
+            .write_all(BUNDLED_MAIN_AGENT_TEMPLATE.as_bytes())
+            .with_context(|| format!("write installed template {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            installed_template_exists(path)?;
+            Ok(())
+        }
+        Err(error) => {
+            Err(error).with_context(|| format!("create installed template {}", path.display()))
+        }
+    }
+}
+
+fn read_existing_template_file(path: &Path) -> Result<String> {
+    let mut file = open_template_file_no_follow(path)
+        .with_context(|| format!("open main-agent template {}", path.display()))?;
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .with_context(|| format!("read main-agent template {}", path.display()))?;
+    Ok(content)
+}
+
+#[cfg(unix)]
+fn open_template_file_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn open_template_file_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    OpenOptions::new().read(true).open(path)
+}
+
+#[cfg(unix)]
+fn create_new_template_file(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_new_template_file(path: &Path) -> std::io::Result<fs::File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 fn runtime_guidance(runtime: GuidanceRuntime) -> &'static str {

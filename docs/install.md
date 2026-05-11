@@ -111,7 +111,23 @@ Plain uninstall keeps `$HOME/.helm-agent` so task records are not deleted by acc
 
 ## Project Setup
 
-Add HelmAgent coordinator instructions to one project:
+Add HelmAgent coordinator instructions to one project with the installed CLI:
+
+```bash
+helm-agent project init --path /path/to/project --agent all
+helm-agent agent prompt --runtime codex
+helm-agent board serve --host 127.0.0.1 --port 8765
+```
+
+This creates or updates `/path/to/project/AGENTS.md` and `/path/to/project/CLAUDE.md` with an include for:
+
+```text
+@$HOME/.helm-agent/main-agent-template.md
+```
+
+Use `--agent codex`, `--agent claude`, or `--agent opencode` when you only want one runtime's project guidance file.
+
+The legacy installer path is still available when you only have the install script:
 
 ```bash
 INSTALLER=/tmp/helm-agent-install.sh
@@ -119,13 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.
 sh ./install.sh init-project /path/to/project
 ```
 
-This creates or updates `/path/to/project/AGENTS.md` with an include for:
-
-```text
-@$HOME/.helm-agent/main-agent-template.md
-```
-
-If the template has not been installed yet, `init-project` installs it first. The installer only modifies `$HOME/.helm-agent` and the project you pass. It does not touch global Claude Code or Codex configuration.
+If the template has not been installed yet, both project setup paths install or bootstrap it first. They only modify `$HOME/.helm-agent` and the project you pass. They do not touch global Claude Code or Codex configuration.
 
 ## Dry Run
 

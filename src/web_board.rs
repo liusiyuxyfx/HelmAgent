@@ -3,9 +3,9 @@ use crate::{
     output,
     store::TaskStore,
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 pub const DEFAULT_REFRESH_SECONDS: u64 = 5;
 
@@ -50,6 +50,7 @@ pub fn load_task_board_tasks(store: &TaskStore) -> Result<Vec<TaskRecord>> {
 }
 
 pub fn serve_task_board(store: &TaskStore, host: &str, port: u16) -> Result<()> {
+    validate_loopback_bind_host(host, port)?;
     let listener = TcpListener::bind((host, port))
         .with_context(|| format!("bind HelmAgent board server on {host}:{port}"))?;
     println!("Serving HelmAgent board at http://{host}:{port}");
@@ -64,7 +65,16 @@ pub fn serve_task_board(store: &TaskStore, host: &str, port: u16) -> Result<()> 
 
 fn handle_connection(mut stream: TcpStream, store: &TaskStore) -> Result<()> {
     let mut request = [0; 1024];
-    let _bytes_read = stream.read(&mut request).context("read board request")?;
+    let bytes_read = stream.read(&mut request).context("read board request")?;
+    let request = std::str::from_utf8(&request[..bytes_read]).unwrap_or_default();
+    if !is_allowed_board_request_host(request) {
+        let response = forbidden_http_response();
+        stream
+            .write_all(response.as_bytes())
+            .context("write forbidden board response")?;
+        return Ok(());
+    }
+
     let tasks = load_task_board_tasks(store)?;
     let body = render_task_board_html(&tasks);
     let response = board_http_response(&body);
@@ -74,12 +84,63 @@ fn handle_connection(mut stream: TcpStream, store: &TaskStore) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_loopback_bind_host(host: &str, port: u16) -> Result<()> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .with_context(|| format!("resolve board host {host}:{port}"))?
+        .collect::<Vec<_>>();
+
+    if addresses.is_empty() {
+        bail!("board host did not resolve: {host}");
+    }
+    if addresses.iter().any(|address| !address.ip().is_loopback()) {
+        bail!("board serve only supports loopback hosts by default: {host}");
+    }
+
+    Ok(())
+}
+
+pub fn is_allowed_board_request_host(request: &str) -> bool {
+    request
+        .lines()
+        .find_map(host_header_value)
+        .map(is_allowed_loopback_host_header)
+        .unwrap_or(false)
+}
+
 pub fn board_http_response(body: &str) -> String {
     format!(
         "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\n\r\n{}",
         body.len(),
         body
     )
+}
+
+pub fn forbidden_http_response() -> String {
+    let body = "Forbidden\n";
+    format!(
+        "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain; charset=utf-8\r\nCache-Control: no-store\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    )
+}
+
+fn host_header_value(line: &str) -> Option<&str> {
+    line.split_once(':')
+        .and_then(|(name, value)| name.eq_ignore_ascii_case("host").then_some(value.trim()))
+}
+
+fn is_allowed_loopback_host_header(value: &str) -> bool {
+    let host = host_header_host(value);
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]" | "::1")
+}
+
+fn host_header_host(value: &str) -> &str {
+    if let Some(end) = value.strip_prefix('[').and_then(|rest| rest.find(']')) {
+        return &value[..=end + 1];
+    }
+
+    value.split(':').next().unwrap_or(value)
 }
 
 fn escape_html(text: &str) -> String {

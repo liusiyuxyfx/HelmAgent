@@ -181,8 +181,11 @@ print_guidance() {
     cat <<GUIDANCE
 
 Project integration:
+  helm-agent project init --path /path/to/project --agent all
+  helm-agent agent prompt --runtime codex
+  helm-agent board serve --host 127.0.0.1 --port 8765
   helm-agent task board
-  Add this line to a project AGENTS.md when supported:
+  Legacy manual include:
     @$HELM_AGENT_TEMPLATE_FILE
 
 Load environment in your shell:

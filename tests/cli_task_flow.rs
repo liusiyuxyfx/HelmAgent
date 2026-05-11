@@ -4,7 +4,7 @@ use helm_agent::store::TaskStore;
 use predicates::prelude::PredicateBooleanExt;
 use predicates::str::{contains, is_empty};
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 use tempfile::tempdir;
 use time::{Duration, OffsetDateTime};
@@ -33,7 +33,11 @@ fn fake_tmux_script(path: &Path, record_path: &Path) {
 fn project_init_all_writes_agent_instruction_files_idempotently() {
     let home = tempdir().unwrap();
     let project = tempdir().unwrap();
-    let template = home.path().join("main-agent-template.md");
+    let template = home
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("main-agent-template.md");
     fs::write(&template, "# HelmAgent Main-Agent Operating Template\n").unwrap();
 
     for _ in 0..2 {
@@ -63,7 +67,11 @@ fn project_init_all_writes_agent_instruction_files_idempotently() {
 fn project_init_bootstraps_missing_installed_template() {
     let home = tempdir().unwrap();
     let project = tempdir().unwrap();
-    let template = home.path().join("main-agent-template.md");
+    let template = home
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("main-agent-template.md");
     assert!(!template.exists());
 
     helm_agent_with_home(home.path())
@@ -87,6 +95,55 @@ fn project_init_bootstraps_missing_installed_template() {
         template_content.contains("# HelmAgent Main-Agent Operating Template"),
         "{template_content}"
     );
+}
+
+#[test]
+fn project_init_rejects_relative_helm_agent_home() {
+    let project = tempdir().unwrap();
+
+    let mut cmd = Command::cargo_bin("helm-agent").unwrap();
+    cmd.env("HELM_AGENT_HOME", "relative-helm-agent-home")
+        .args([
+            "project",
+            "init",
+            "--path",
+            project.path().to_str().unwrap(),
+            "--agent",
+            "codex",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("HELM_AGENT_HOME must be absolute"));
+}
+
+#[cfg(unix)]
+#[test]
+fn project_init_rejects_symlink_installed_template() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let outside_template = outside.path().join("main-agent-template.md");
+    fs::write(&outside_template, "external template\n").unwrap();
+    symlink(
+        &outside_template,
+        home.path().join("main-agent-template.md"),
+    )
+    .unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "project",
+            "init",
+            "--path",
+            project.path().to_str().unwrap(),
+            "--agent",
+            "codex",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("refuse to use symlink main-agent template"));
+
+    assert!(!project.path().join("AGENTS.md").exists());
 }
 
 #[test]

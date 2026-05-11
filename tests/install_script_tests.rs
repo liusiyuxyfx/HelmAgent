@@ -46,6 +46,18 @@ fn install_dry_run_prints_install_steps() {
     assert!(stdout.contains("write env"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
     assert!(stdout.contains("main-agent-template.md"), "{stdout}");
+    assert!(
+        stdout.contains("helm-agent project init --path /path/to/project --agent all"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("helm-agent agent prompt --runtime codex"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("helm-agent board serve --host 127.0.0.1 --port 8765"),
+        "{stdout}"
+    );
     assert!(stdout.contains("helm-agent task board"), "{stdout}");
 }
 
@@ -295,6 +307,9 @@ fn install_docs_cover_core_lifecycle_commands() {
         "-o \"$INSTALLER\" && sh \"$INSTALLER\" doctor",
         "-o \"$INSTALLER\" && sh \"$INSTALLER\" uninstall",
         "-o \"$INSTALLER\" && sh \"$INSTALLER\" init-project",
+        "helm-agent project init --path /path/to/project --agent all",
+        "helm-agent agent prompt --runtime codex",
+        "helm-agent board serve --host 127.0.0.1 --port 8765",
         "install --dry-run",
         "uninstall --purge",
         "init-project",

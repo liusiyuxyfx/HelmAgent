@@ -93,6 +93,55 @@ fn http_response_wraps_board_html_as_no_store_html() {
 }
 
 #[test]
+fn board_request_host_must_be_loopback() {
+    assert!(web_board::is_allowed_board_request_host(
+        "GET / HTTP/1.1\r\nHost: localhost:8765\r\n\r\n"
+    ));
+    assert!(web_board::is_allowed_board_request_host(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:8765\r\n\r\n"
+    ));
+    assert!(web_board::is_allowed_board_request_host(
+        "GET / HTTP/1.1\r\nHost: [::1]:8765\r\n\r\n"
+    ));
+    assert!(!web_board::is_allowed_board_request_host(
+        "GET / HTTP/1.1\r\nHost: example.invalid:8765\r\n\r\n"
+    ));
+    assert!(!web_board::is_allowed_board_request_host(
+        "GET / HTTP/1.1\r\n\r\n"
+    ));
+}
+
+#[test]
+fn board_serve_rejects_non_loopback_bind_hosts() {
+    web_board::validate_loopback_bind_host("127.0.0.1", 8765).unwrap();
+    web_board::validate_loopback_bind_host("localhost", 8765).unwrap();
+
+    let err = web_board::validate_loopback_bind_host("0.0.0.0", 8765)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("only supports loopback hosts"), "{err}");
+}
+
+#[test]
+fn forbidden_response_is_no_store_plain_text() {
+    let response = web_board::forbidden_http_response();
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+        "{response}"
+    );
+    assert!(
+        response.contains("Content-Type: text/plain; charset=utf-8\r\n"),
+        "{response}"
+    );
+    assert!(
+        response.contains("Cache-Control: no-store\r\n"),
+        "{response}"
+    );
+    assert!(response.ends_with("Forbidden\n"), "{response}");
+}
+
+#[test]
 fn loaded_board_tasks_hide_archived_and_sort_newest_first() {
     let home = tempdir().unwrap();
     let store = TaskStore::new(home.path().to_path_buf());
