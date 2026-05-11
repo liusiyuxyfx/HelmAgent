@@ -79,10 +79,10 @@ helm-agent task review PM-20260509-101 --accept
 helm-agent task review PM-20260509-101 --request-changes "Add a regression test before merging"
 ```
 
-Start a real tmux-backed child-agent session after the dry run looks correct:
+Start a real tmux-backed child-agent session after the dry run looks correct. If the task is medium or high risk, get approval and pass `--confirm`:
 
 ```bash
-helm-agent task dispatch --runtime claude PM-20260509-101
+helm-agent task dispatch --runtime claude --confirm PM-20260509-101
 ```
 
 Start Codex only after approval:
