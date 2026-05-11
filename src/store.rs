@@ -69,6 +69,51 @@ impl TaskStore {
         Ok(task)
     }
 
+    pub fn list_tasks(&self) -> Result<Vec<TaskRecord>> {
+        let tasks_dir = self.root.join("tasks");
+        if !tasks_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut tasks = Vec::new();
+        for year_entry in fs::read_dir(&tasks_dir)
+            .with_context(|| format!("read tasks directory {}", tasks_dir.display()))?
+        {
+            let year_entry =
+                year_entry.with_context(|| format!("read entry from {}", tasks_dir.display()))?;
+            let year_path = year_entry.path();
+            if !year_path.is_dir() {
+                continue;
+            }
+
+            for task_entry in fs::read_dir(&year_path)
+                .with_context(|| format!("read task year directory {}", year_path.display()))?
+            {
+                let task_entry = task_entry
+                    .with_context(|| format!("read entry from {}", year_path.display()))?;
+                let path = task_entry.path();
+                if path.extension().and_then(|value| value.to_str()) != Some("yaml") {
+                    continue;
+                }
+
+                let content = fs::read_to_string(&path)
+                    .with_context(|| format!("read task {}", path.display()))?;
+                let task: TaskRecord = serde_yaml::from_str(&content)
+                    .with_context(|| format!("parse task {}", path.display()))?;
+                if self.task_path(&task.id) != path {
+                    bail!(
+                        "task id mismatch: loaded {} from unexpected path {}",
+                        task.id,
+                        path.display()
+                    );
+                }
+                tasks.push(task);
+            }
+        }
+
+        Ok(tasks)
+    }
+
     pub fn append_event(&self, event: &TaskEvent) -> Result<()> {
         let path = self.events_path(&event.task_id);
         if let Some(parent) = path.parent() {

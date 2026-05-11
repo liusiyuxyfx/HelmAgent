@@ -206,6 +206,58 @@ fn read_events_rejects_mismatched_task_id() {
 }
 
 #[test]
+fn list_tasks_returns_all_saved_tasks() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let now = OffsetDateTime::UNIX_EPOCH;
+    let first = TaskRecord::new(
+        "PM-20260511-001".to_string(),
+        "First task".to_string(),
+        "/repo".into(),
+        now,
+    );
+    let second = TaskRecord::new(
+        "A/B".to_string(),
+        "Unsafe id task".to_string(),
+        "/repo".into(),
+        now,
+    );
+
+    store.save_task(&first).unwrap();
+    store.save_task(&second).unwrap();
+
+    let mut tasks = store.list_tasks().unwrap();
+    tasks.sort_by(|left, right| left.id.cmp(&right.id));
+
+    assert_eq!(tasks.len(), 2);
+    assert_eq!(tasks[0].id, "A/B");
+    assert_eq!(tasks[1].id, "PM-20260511-001");
+}
+
+#[test]
+fn list_tasks_rejects_record_from_unexpected_path() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+    let now = OffsetDateTime::UNIX_EPOCH;
+    let task = TaskRecord::new(
+        "A/B".to_string(),
+        "Wrong path".to_string(),
+        "/repo".into(),
+        now,
+    );
+    let wrong_path = store.task_path("A_B");
+    fs::create_dir_all(wrong_path.parent().unwrap()).unwrap();
+    fs::write(wrong_path, serde_yaml::to_string(&task).unwrap()).unwrap();
+
+    let error = store
+        .list_tasks()
+        .expect_err("mismatched path should fail");
+    let error_text = format!("{error:#}");
+
+    assert!(error_text.contains("task id mismatch"), "{error_text}");
+}
+
+#[test]
 fn event_parse_errors_include_line_number() {
     let temp = tempdir().unwrap();
     let store = TaskStore::new(temp.path().to_path_buf());
