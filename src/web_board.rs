@@ -1,4 +1,8 @@
-use crate::{domain::TaskRecord, output, store::TaskStore};
+use crate::{
+    domain::{TaskRecord, TaskStatus},
+    output,
+    store::TaskStore,
+};
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -38,6 +42,13 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
     )
 }
 
+pub fn load_task_board_tasks(store: &TaskStore) -> Result<Vec<TaskRecord>> {
+    let mut tasks = store.list_tasks()?;
+    tasks.retain(|task| task.status != TaskStatus::Archived);
+    tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+    Ok(tasks)
+}
+
 pub fn serve_task_board(store: &TaskStore, host: &str, port: u16) -> Result<()> {
     let listener = TcpListener::bind((host, port))
         .with_context(|| format!("bind HelmAgent board server on {host}:{port}"))?;
@@ -54,7 +65,7 @@ pub fn serve_task_board(store: &TaskStore, host: &str, port: u16) -> Result<()> 
 fn handle_connection(mut stream: TcpStream, store: &TaskStore) -> Result<()> {
     let mut request = [0; 1024];
     let _bytes_read = stream.read(&mut request).context("read board request")?;
-    let tasks = store.list_tasks()?;
+    let tasks = load_task_board_tasks(store)?;
     let body = render_task_board_html(&tasks);
     let response = board_http_response(&body);
     stream

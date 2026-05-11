@@ -341,7 +341,7 @@ fn handle_project(project: ProjectCommand) -> Result<()> {
         ProjectSubcommand::Init(args) => {
             let files = project_agent_files(args.agent);
             for file in files {
-                let path = guidance::add_installed_project_guidance_include(&args.path, *file)?;
+                guidance::add_installed_project_guidance_include(&args.path, *file)?;
                 println!("Updated {}", file.file_name());
             }
             Ok(())
@@ -364,9 +364,7 @@ fn handle_agent(agent: AgentCommand) -> Result<()> {
 fn handle_board(board: BoardCommand, store: &TaskStore) -> Result<()> {
     match board.command {
         BoardSubcommand::Html => {
-            let mut tasks = store.list_tasks()?;
-            tasks.retain(|task| task.status != TaskStatus::Archived);
-            tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            let tasks = web_board::load_task_board_tasks(store)?;
             print!("{}", web_board::render_task_board_html(&tasks));
             Ok(())
         }
@@ -414,9 +412,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             Ok(())
         }
         TaskSubcommand::Board => {
-            let mut tasks = store.list_tasks()?;
-            tasks.retain(|task| task.status != TaskStatus::Archived);
-            tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+            let tasks = web_board::load_task_board_tasks(store)?;
             print!("{}", output::task_board(&tasks));
             Ok(())
         }

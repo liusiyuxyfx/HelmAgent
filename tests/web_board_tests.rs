@@ -1,6 +1,8 @@
 use helm_agent::domain::{AgentRuntime, TaskRecord, TaskStatus};
+use helm_agent::store::TaskStore;
 use helm_agent::web_board;
-use time::OffsetDateTime;
+use tempfile::tempdir;
+use time::{Duration, OffsetDateTime};
 
 fn task(id: &str, title: &str) -> TaskRecord {
     let mut task = TaskRecord::new(
@@ -88,4 +90,31 @@ fn http_response_wraps_board_html_as_no_store_html() {
         "{response}"
     );
     assert!(response.ends_with(body), "{response}");
+}
+
+#[test]
+fn loaded_board_tasks_hide_archived_and_sort_newest_first() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut older = task("PM-20260511-001", "Older task");
+    let mut newer = task("PM-20260511-002", "Newer task");
+    let mut archived = task("PM-20260511-003", "Archived task");
+    older.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(10);
+    newer.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(20);
+    archived.updated_at = OffsetDateTime::UNIX_EPOCH + Duration::seconds(30);
+    archived.status = TaskStatus::Archived;
+
+    store.save_task(&older).unwrap();
+    store.save_task(&newer).unwrap();
+    store.save_task(&archived).unwrap();
+
+    let tasks = web_board::load_task_board_tasks(&store).unwrap();
+
+    assert_eq!(
+        tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["PM-20260511-002", "PM-20260511-001"]
+    );
 }
