@@ -116,6 +116,16 @@ fn project_init_rejects_relative_helm_agent_home() {
         .stderr(contains("HELM_AGENT_HOME must be absolute"));
 }
 
+#[test]
+fn board_serve_rejects_relative_helm_agent_home() {
+    let mut cmd = Command::cargo_bin("helm-agent").unwrap();
+    cmd.env("HELM_AGENT_HOME", "relative-helm-agent-home")
+        .args(["board", "serve", "--host", "127.0.0.1", "--port", "0"])
+        .assert()
+        .failure()
+        .stderr(contains("HELM_AGENT_HOME must be absolute"));
+}
+
 #[cfg(unix)]
 #[test]
 fn project_init_rejects_symlink_installed_template() {

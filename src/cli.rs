@@ -2,7 +2,7 @@ use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord,
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
 use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
-use crate::paths::helm_agent_home;
+use crate::paths::canonical_helm_agent_home;
 use crate::policy::{DispatchDecision, PolicyInput};
 use crate::store::TaskStore;
 use crate::web_board;
@@ -326,7 +326,7 @@ impl EventTypeArg {
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let store = TaskStore::new(helm_agent_home()?);
+    let store = TaskStore::new(canonical_helm_agent_home()?);
 
     match cli.command {
         Command::Task(task) => handle_task(task, &store),

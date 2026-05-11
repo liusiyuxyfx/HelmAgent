@@ -1,5 +1,5 @@
 use helm_agent::domain::{TaskEvent, TaskRecord};
-use helm_agent::paths::{helm_agent_home, HELM_AGENT_HOME_ENV};
+use helm_agent::paths::{canonical_helm_agent_home, helm_agent_home, HELM_AGENT_HOME_ENV};
 use helm_agent::store::TaskStore;
 use std::env;
 use std::ffi::OsString;
@@ -17,6 +17,12 @@ struct EnvRestore {
 
 impl EnvRestore {
     fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+        let original = env::var_os(key);
+        env::set_var(key, value);
+        Self { key, original }
+    }
+
+    fn set_value(key: &'static str, value: &str) -> Self {
         let original = env::var_os(key);
         env::set_var(key, value);
         Self { key, original }
@@ -289,4 +295,29 @@ fn helm_agent_home_uses_env_override() {
     let resolved = helm_agent_home().unwrap();
 
     assert_eq!(resolved, temp.path());
+}
+
+#[test]
+fn canonical_helm_agent_home_rejects_relative_env_override() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let _restore = EnvRestore::set_value(HELM_AGENT_HOME_ENV, "relative-helm-agent-home");
+
+    let error = canonical_helm_agent_home().unwrap_err();
+    let error_text = format!("{error:#}");
+
+    assert!(
+        error_text.contains("HELM_AGENT_HOME must be absolute"),
+        "{error_text}"
+    );
+}
+
+#[test]
+fn canonical_helm_agent_home_returns_absolute_canonical_env_override() {
+    let _guard = ENV_LOCK.lock().unwrap();
+    let temp = tempdir().unwrap();
+    let _restore = EnvRestore::set_path(HELM_AGENT_HOME_ENV, temp.path());
+
+    let resolved = canonical_helm_agent_home().unwrap();
+
+    assert_eq!(resolved, temp.path().canonicalize().unwrap());
 }

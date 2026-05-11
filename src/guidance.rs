@@ -1,4 +1,4 @@
-use crate::paths::helm_agent_home;
+use crate::paths::canonical_helm_agent_home;
 use anyhow::{bail, Context, Result};
 use std::fs::{self, Metadata, OpenOptions};
 use std::io::{Read, Write};
@@ -166,29 +166,6 @@ fn reject_symlink_guidance_file(target_path: &Path) -> Result<()> {
             Err(error).with_context(|| format!("inspect guidance file {}", target_path.display()))
         }
     }
-}
-
-fn canonical_helm_agent_home() -> Result<PathBuf> {
-    let home = helm_agent_home()?;
-    if !home.is_absolute() {
-        bail!("HELM_AGENT_HOME must be absolute: {}", home.display());
-    }
-
-    fs::create_dir_all(&home)
-        .with_context(|| format!("create HelmAgent home {}", home.display()))?;
-    let canonical = home
-        .canonicalize()
-        .with_context(|| format!("canonicalize HelmAgent home {}", home.display()))?;
-    let metadata = fs::metadata(&canonical)
-        .with_context(|| format!("inspect HelmAgent home {}", canonical.display()))?;
-    if !metadata.is_dir() {
-        bail!(
-            "HELM_AGENT_HOME is not a directory: {}",
-            canonical.display()
-        );
-    }
-
-    Ok(canonical)
 }
 
 fn installed_template_exists(path: &Path) -> Result<bool> {
