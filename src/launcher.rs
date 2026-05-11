@@ -20,6 +20,12 @@ pub struct LaunchPreview {
     pub resume_command: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TmuxSessionState {
+    Alive,
+    Missing,
+}
+
 #[derive(Debug, Clone)]
 pub struct Launcher {
     tmux_bin: PathBuf,
@@ -92,6 +98,26 @@ impl Launcher {
         }
 
         Ok(preview)
+    }
+
+    pub fn session_state(&self, session: &str) -> Result<TmuxSessionState> {
+        let output = Command::new(&self.tmux_bin)
+            .arg("has-session")
+            .arg("-t")
+            .arg(format!("={session}"))
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to inspect tmux session {session} using {}",
+                    self.tmux_bin.display()
+                )
+            })?;
+
+        if output.status.success() {
+            Ok(TmuxSessionState::Alive)
+        } else {
+            Ok(TmuxSessionState::Missing)
+        }
     }
 }
 

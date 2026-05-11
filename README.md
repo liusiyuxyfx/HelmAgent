@@ -99,6 +99,13 @@ helm-agent task board
 helm-agent board html
 ```
 
+Sync recorded tmux sessions before reporting delegated session health:
+
+```bash
+helm-agent task sync PM-20260511-001
+helm-agent task sync --all
+```
+
 Mark real task state:
 
 ```bash

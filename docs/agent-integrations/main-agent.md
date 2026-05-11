@@ -31,6 +31,7 @@ helm-agent agent prompt --runtime opencode
 - Create a HelmAgent task before delegating work.
 - Run `helm-agent task status <id>` before reporting task state.
 - Run `helm-agent task board` before reporting multi-task state.
+- Run `helm-agent task sync <id>` before reporting whether a delegated tmux session is still active.
 - Use `helm-agent task triage <id>` to record risk, priority, preferred runtime, and review reason before dispatch.
 - Run `helm-agent task dispatch --dry-run --runtime <runtime> <id>` before starting a child agent.
 - Do not claim code-changing work is complete until `task review --accept` has been run. Before that, report it as ready for review once the task is marked ready and the artifacts are presented to the human.
@@ -99,6 +100,13 @@ Show recovery commands:
 helm-agent task resume PM-20260509-101
 ```
 
+Sync recorded tmux sessions before reporting child-agent health:
+
+```bash
+helm-agent task sync PM-20260509-101
+helm-agent task sync --all
+```
+
 Human or authorized reviewer commands, after the task is ready for review:
 
 ```bash
@@ -141,5 +149,7 @@ Review: Inspect artifacts, then run helm-agent task review PM-20260509-101 --acc
 ## Reporting Guidance
 
 Main agents should report HelmAgent state, not memory or assumptions. If `helm-agent task status <id>` says the task is running, report it as running. If the child agent says it is done but the task is not marked ready for review or artifacts have not been presented to the human, report that review handoff is still pending. If the task is ready for review but not accepted, report that implementation is ready for review, not complete.
+
+Use `helm-agent task sync <id>` before describing tmux session health. `sync` can mark a running task blocked when its recorded tmux session is gone, while dry-run queued tasks stay queued.
 
 For copyable coordinator instructions, use [Main-Agent Operating Template](main-agent-template.md).

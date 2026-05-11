@@ -6,6 +6,7 @@ Use this when acting as the coordinating agent for coding work. HelmAgent is the
 
 - Run `helm-agent task board` before reporting multi-task status.
 - Run `helm-agent task status <id>` before reporting one task's status.
+- Run `helm-agent task sync <id>` before reporting delegated tmux session health.
 - Create a task before delegation:
 
 ```bash
@@ -37,6 +38,13 @@ helm-agent task dispatch --runtime claude --confirm PM-YYYYMMDD-001
 
 ```bash
 helm-agent task resume PM-YYYYMMDD-001
+```
+
+- Before reporting whether child-agent sessions are still active, sync tmux state:
+
+```bash
+helm-agent task sync PM-YYYYMMDD-001
+helm-agent task sync --all
 ```
 
 - Record progress as notes:
@@ -72,6 +80,7 @@ Use this shape when summarizing delegated work:
 
 ```text
 Board: helm-agent task board
+Sync: helm-agent task sync PM-YYYYMMDD-001
 Task: PM-YYYYMMDD-001 - <title>
 Status: <status from HelmAgent>
 Runtime: <claude|opencode|codex>

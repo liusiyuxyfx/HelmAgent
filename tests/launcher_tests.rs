@@ -1,6 +1,6 @@
 use helm_agent::adapter::RuntimeAdapter;
 use helm_agent::domain::AgentRuntime;
-use helm_agent::launcher::{DispatchPlan, Launcher};
+use helm_agent::launcher::{DispatchPlan, Launcher, TmuxSessionState};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
@@ -25,6 +25,20 @@ fn failing_tmux_script(path: &Path) {
     fs::write(
         path,
         "#!/bin/sh\nprintf '%s\\n' 'tmux failed: duplicate session' >&2\nexit 7\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
+fn has_session_tmux_script(path: &Path, record_path: &Path, exit_code: i32) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone > '{record_path}'\nexit {exit_code}\n"
+        ),
     )
     .unwrap();
     let mut permissions = fs::metadata(path).unwrap().permissions();
@@ -239,4 +253,36 @@ fn launch_error_includes_tmux_output_and_session_name() {
 
     assert!(error.contains("helm-agent-PM-20260509-014-claude"));
     assert!(error.contains("tmux failed: duplicate session"));
+}
+
+#[test]
+fn session_state_invokes_tmux_has_session() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    has_session_tmux_script(&tmux_bin, &record_path, 0);
+
+    let state = Launcher::with_tmux_bin(tmux_bin)
+        .session_state("helm-agent-PM-20260511-001-claude")
+        .unwrap();
+
+    assert_eq!(state, TmuxSessionState::Alive);
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "has-session\n-t\n=helm-agent-PM-20260511-001-claude\n"
+    );
+}
+
+#[test]
+fn session_state_reports_missing_for_nonzero_tmux_exit() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    has_session_tmux_script(&tmux_bin, &record_path, 1);
+
+    let state = Launcher::with_tmux_bin(tmux_bin)
+        .session_state("helm-agent-PM-20260511-002-codex")
+        .unwrap();
+
+    assert_eq!(state, TmuxSessionState::Missing);
 }

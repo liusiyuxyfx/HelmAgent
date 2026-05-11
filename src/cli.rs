@@ -1,6 +1,6 @@
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
-use crate::launcher::{DispatchPlan, Launcher};
+use crate::launcher::{DispatchPlan, Launcher, TmuxSessionState};
 use crate::output;
 use crate::paths::canonical_helm_agent_home;
 use crate::policy::{DispatchDecision, PolicyInput};
@@ -96,6 +96,7 @@ enum TaskSubcommand {
     Create(CreateArgs),
     Status(StatusArgs),
     Resume(ResumeArgs),
+    Sync(SyncArgs),
     Dispatch(DispatchArgs),
     Mark(MarkArgs),
     Triage(TriageArgs),
@@ -129,6 +130,13 @@ struct StatusArgs {
 #[derive(Debug, Args)]
 struct ResumeArgs {
     id: String,
+}
+
+#[derive(Debug, Args)]
+struct SyncArgs {
+    id: Option<String>,
+    #[arg(long, conflicts_with = "id")]
+    all: bool,
 }
 
 #[derive(Debug, Args)]
@@ -380,6 +388,93 @@ fn project_agent_files(agent: ProjectAgentArg) -> &'static [GuidanceFile] {
     }
 }
 
+fn handle_task_sync(args: SyncArgs, store: &TaskStore) -> Result<()> {
+    let launcher = Launcher::new();
+    match (args.id, args.all) {
+        (Some(id), false) => {
+            let task = store.load_task(&id)?;
+            println!("{}", sync_task(task, store, &launcher)?);
+            Ok(())
+        }
+        (None, true) => {
+            let mut tasks = store.list_tasks()?;
+            tasks.retain(|task| {
+                !matches!(task.status, TaskStatus::Done | TaskStatus::Archived)
+                    && task.assignment.tmux_session.is_some()
+            });
+            tasks.sort_by(|left, right| right.updated_at.cmp(&left.updated_at));
+
+            if tasks.is_empty() {
+                println!("No syncable tasks");
+                return Ok(());
+            }
+
+            for task in tasks {
+                println!("{}", sync_task(task, store, &launcher)?);
+            }
+            Ok(())
+        }
+        (None, false) => bail!("sync requires <id> or --all"),
+        (Some(_), true) => bail!("sync accepts either <id> or --all"),
+    }
+}
+
+fn sync_task(mut task: TaskRecord, store: &TaskStore, launcher: &Launcher) -> Result<String> {
+    if matches!(task.status, TaskStatus::Done | TaskStatus::Archived) {
+        return Ok(format!("{} skipped {}", task.id, task.status.as_str()));
+    }
+
+    let now = OffsetDateTime::now_utc();
+    let Some(session) = task.assignment.tmux_session.clone() else {
+        return Ok(format!("{} no_session", task.id));
+    };
+
+    match launcher.session_state(&session)? {
+        TmuxSessionState::Alive => {
+            task.status = TaskStatus::Running;
+            if task
+                .progress
+                .blocker
+                .as_deref()
+                .is_some_and(|blocker| blocker.starts_with("tmux session missing:"))
+            {
+                task.progress.blocker = None;
+            }
+            task.progress.last_event = format!("tmux session alive: {session}");
+            task.progress.next_action =
+                "Inspect child agent session or wait for review handoff".to_string();
+            task.touch(now);
+            store.save_task(&task)?;
+            store.append_event(&TaskEvent::new(
+                task.id.clone(),
+                "sync_alive",
+                format!("tmux session alive: {session}"),
+                now,
+            ))?;
+            Ok(format!("{} alive {}", task.id, session))
+        }
+        TmuxSessionState::Missing => {
+            if matches!(task.status, TaskStatus::Running | TaskStatus::Blocked) {
+                let message = format!("tmux session missing: {session}");
+                task.status = TaskStatus::Blocked;
+                task.progress.blocker = Some(message.clone());
+                task.progress.last_event = message.clone();
+                task.progress.next_action =
+                    "Restart dispatch or inspect the task manually".to_string();
+                task.touch(now);
+                store.save_task(&task)?;
+            }
+            store.append_event(&TaskEvent::new(
+                task.id.clone(),
+                "sync_missing",
+                format!("tmux session missing: {session}"),
+                now,
+            ))?;
+            Ok(format!("{} missing {}", task.id, session))
+        }
+    }
+}
+
 fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
     match task.command {
         TaskSubcommand::List(args) => {
@@ -444,6 +539,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             print!("{}", output::resume_text(&task));
             Ok(())
         }
+        TaskSubcommand::Sync(args) => handle_task_sync(args, store),
         TaskSubcommand::Dispatch(args) => {
             let now = OffsetDateTime::now_utc();
             let mut task = store.load_task(&args.id)?;

@@ -29,6 +29,20 @@ fn fake_tmux_script(path: &Path, record_path: &Path) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn fake_tmux_has_session_script(path: &Path, record_path: &Path, exit_code: i32) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone > '{record_path}'\nexit {exit_code}\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 #[test]
 fn project_init_all_writes_agent_instruction_files_idempotently() {
     let home = tempdir().unwrap();
@@ -587,6 +601,256 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("[running]"));
+}
+
+#[test]
+fn sync_running_task_blocks_when_tmux_session_is_missing() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_has_session_script(&tmux_bin, &record_path, 1);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S001",
+            "--title",
+            "Sync missing tmux session",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = store.load_task("PM-20260511-S001").unwrap();
+    task.status = TaskStatus::Running;
+    task.assignment.tmux_session = Some("helm-agent-PM-20260511-S001-claude".to_string());
+    store.save_task(&task).unwrap();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "sync", "PM-20260511-S001"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "PM-20260511-S001 missing helm-agent-PM-20260511-S001-claude",
+        ));
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "has-session\n-t\n=helm-agent-PM-20260511-S001-claude\n"
+    );
+    let task = store.load_task("PM-20260511-S001").unwrap();
+    assert_eq!(task.status, TaskStatus::Blocked);
+    assert_eq!(
+        task.progress.blocker.as_deref(),
+        Some("tmux session missing: helm-agent-PM-20260511-S001-claude")
+    );
+    let event = store
+        .read_events("PM-20260511-S001")
+        .unwrap()
+        .pop()
+        .unwrap();
+    assert_eq!(event.event_type, "sync_missing");
+}
+
+#[test]
+fn sync_queued_dry_run_keeps_missing_session_queued() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_has_session_script(&tmux_bin, &record_path, 1);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S002",
+            "--title",
+            "Sync dry-run task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-S002",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "sync", "PM-20260511-S002"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "PM-20260511-S002 missing helm-agent-PM-20260511-S002-claude",
+        ));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-S002").unwrap();
+    assert_eq!(task.status, TaskStatus::Queued);
+    assert_eq!(task.progress.blocker, None);
+}
+
+#[test]
+fn sync_reports_no_session_without_mutating_task() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S003",
+            "--title",
+            "No tmux session yet",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "sync", "PM-20260511-S003"])
+        .assert()
+        .success()
+        .stdout(contains("PM-20260511-S003 no_session"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-S003").unwrap();
+    assert_eq!(task.status, TaskStatus::Inbox);
+    assert_eq!(store.read_events("PM-20260511-S003").unwrap().len(), 1);
+}
+
+#[test]
+fn sync_all_marks_alive_session_tasks_running() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_has_session_script(&tmux_bin, &record_path, 0);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S004",
+            "--title",
+            "Alive tmux task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-S004",
+            "--runtime",
+            "claude",
+            "--dry-run",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S005",
+            "--title",
+            "No session task",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let output = helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "sync", "--all"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let output = String::from_utf8(output).unwrap();
+
+    assert!(
+        output.contains("PM-20260511-S004 alive helm-agent-PM-20260511-S004-claude"),
+        "{output}"
+    );
+    assert!(!output.contains("PM-20260511-S005"), "{output}");
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-S004").unwrap();
+    assert_eq!(task.status, TaskStatus::Running);
+    assert_eq!(
+        task.progress.last_event,
+        "tmux session alive: helm-agent-PM-20260511-S004-claude"
+    );
+}
+
+#[test]
+fn sync_alive_preserves_non_tmux_blocker() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_has_session_script(&tmux_bin, &record_path, 0);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-S006",
+            "--title",
+            "Blocked for human input",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut task = store.load_task("PM-20260511-S006").unwrap();
+    task.status = TaskStatus::Blocked;
+    task.assignment.tmux_session = Some("helm-agent-PM-20260511-S006-claude".to_string());
+    task.progress.blocker = Some("Waiting for product decision".to_string());
+    store.save_task(&task).unwrap();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "sync", "PM-20260511-S006"])
+        .assert()
+        .success()
+        .stdout(contains(
+            "PM-20260511-S006 alive helm-agent-PM-20260511-S006-claude",
+        ));
+
+    let task = store.load_task("PM-20260511-S006").unwrap();
+    assert_eq!(task.status, TaskStatus::Running);
+    assert_eq!(
+        task.progress.blocker.as_deref(),
+        Some("Waiting for product decision")
+    );
 }
 
 #[test]
