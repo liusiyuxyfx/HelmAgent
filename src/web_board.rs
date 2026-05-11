@@ -53,7 +53,7 @@ pub fn serve_task_board(store: &TaskStore, host: &str, port: u16) -> Result<()> 
 
 fn handle_connection(mut stream: TcpStream, store: &TaskStore) -> Result<()> {
     let mut request = [0; 1024];
-    let _ = stream.read(&mut request);
+    let _bytes_read = stream.read(&mut request).context("read board request")?;
     let tasks = store.list_tasks()?;
     let body = render_task_board_html(&tasks);
     let response = board_http_response(&body);

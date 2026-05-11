@@ -1,10 +1,12 @@
 use crate::paths::helm_agent_home;
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const MAIN_AGENT_TEMPLATE_FILE: &str = "main-agent-template.md";
 pub const FALLBACK_MAIN_AGENT_TEMPLATE: &str = "docs/agent-integrations/main-agent-template.md";
+pub const BUNDLED_MAIN_AGENT_TEMPLATE: &str =
+    include_str!("../docs/agent-integrations/main-agent-template.md");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuidanceRuntime {
@@ -67,9 +69,16 @@ pub fn main_agent_template_path() -> Result<PathBuf> {
 }
 
 pub fn read_main_agent_template() -> Result<String> {
-    let path = main_agent_template_path()?;
-    fs::read_to_string(&path)
-        .with_context(|| format!("read main-agent template {}", path.display()))
+    let installed = installed_main_agent_template_path()?;
+    if installed
+        .try_exists()
+        .with_context(|| format!("check installed template {}", installed.display()))?
+    {
+        return fs::read_to_string(&installed)
+            .with_context(|| format!("read main-agent template {}", installed.display()));
+    }
+
+    Ok(BUNDLED_MAIN_AGENT_TEMPLATE.to_string())
 }
 
 pub fn ensure_installed_main_agent_template() -> Result<PathBuf> {
@@ -81,14 +90,11 @@ pub fn ensure_installed_main_agent_template() -> Result<PathBuf> {
         return Ok(installed);
     }
 
-    let fallback = fallback_main_agent_template_path();
-    let content = fs::read_to_string(&fallback)
-        .with_context(|| format!("read fallback template {}", fallback.display()))?;
     if let Some(parent) = installed.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("create template directory {}", parent.display()))?;
     }
-    fs::write(&installed, content)
+    fs::write(&installed, BUNDLED_MAIN_AGENT_TEMPLATE)
         .with_context(|| format!("write installed template {}", installed.display()))?;
     Ok(installed)
 }
@@ -127,6 +133,7 @@ pub fn add_project_guidance_include(
         .with_context(|| format!("create project directory {}", project_path.display()))?;
 
     let target_path = project_path.join(guidance_file.file_name());
+    reject_symlink_guidance_file(&target_path)?;
     let include_line = format!("@{}", template_path.as_ref().display());
     let mut content = if target_path
         .try_exists()
@@ -157,6 +164,22 @@ pub fn add_project_guidance_include(
     fs::write(&target_path, content)
         .with_context(|| format!("write guidance file {}", target_path.display()))?;
     Ok(target_path)
+}
+
+fn reject_symlink_guidance_file(target_path: &Path) -> Result<()> {
+    match fs::symlink_metadata(target_path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            bail!(
+                "refuse to update symlink guidance file {}",
+                target_path.display()
+            )
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect guidance file {}", target_path.display()))
+        }
+    }
 }
 
 fn runtime_guidance(runtime: GuidanceRuntime) -> &'static str {

@@ -60,6 +60,36 @@ fn project_init_all_writes_agent_instruction_files_idempotently() {
 }
 
 #[test]
+fn project_init_bootstraps_missing_installed_template() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let template = home.path().join("main-agent-template.md");
+    assert!(!template.exists());
+
+    helm_agent_with_home(home.path())
+        .args([
+            "project",
+            "init",
+            "--path",
+            project.path().to_str().unwrap(),
+            "--agent",
+            "codex",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Updated AGENTS.md"));
+
+    let include = format!("@{}", template.display());
+    let agents = fs::read_to_string(project.path().join("AGENTS.md")).unwrap();
+    let template_content = fs::read_to_string(template).unwrap();
+    assert!(agents.contains(&include), "{agents}");
+    assert!(
+        template_content.contains("# HelmAgent Main-Agent Operating Template"),
+        "{template_content}"
+    );
+}
+
+#[test]
 fn agent_prompt_prints_runtime_bootstrap_and_template() {
     let home = tempdir().unwrap();
     fs::write(

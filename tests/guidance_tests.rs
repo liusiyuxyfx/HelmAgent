@@ -1,8 +1,9 @@
 use helm_agent::guidance::{
-    add_installed_project_guidance_include, add_project_guidance_include,
-    ensure_installed_main_agent_template, render_main_agent_prompt_from_template, GuidanceFile,
-    GuidanceRuntime, MAIN_AGENT_TEMPLATE_FILE,
+    add_project_guidance_include, render_main_agent_prompt_from_template, GuidanceFile,
+    GuidanceRuntime,
 };
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use tempfile::tempdir;
 
 #[test]
@@ -76,22 +77,26 @@ fn all_prompt_names_every_supported_runtime() {
     assert!(prompt.contains("opencode"));
 }
 
+#[cfg(unix)]
 #[test]
-fn installed_template_is_bootstrapped_from_fallback_when_missing() {
-    let home = tempdir().unwrap();
+fn project_guidance_refuses_symlink_targets() {
     let project = tempdir().unwrap();
-    std::env::set_var("HELM_AGENT_HOME", home.path());
+    let outside = tempdir().unwrap();
+    let outside_agents = outside.path().join("AGENTS.md");
+    std::fs::write(&outside_agents, "external guidance\n").unwrap();
+    symlink(&outside_agents, project.path().join("AGENTS.md")).unwrap();
 
-    let installed = ensure_installed_main_agent_template().unwrap();
-    assert_eq!(installed, home.path().join(MAIN_AGENT_TEMPLATE_FILE));
-    assert!(installed.exists());
+    let template_path = project.path().join(".helm-agent/main-agent-template.md");
+    let err = add_project_guidance_include(project.path(), GuidanceFile::Agents, &template_path)
+        .unwrap_err()
+        .to_string();
 
-    add_installed_project_guidance_include(project.path(), GuidanceFile::Agents).unwrap();
-    let agents = std::fs::read_to_string(project.path().join("AGENTS.md")).unwrap();
     assert!(
-        agents.contains(&format!("@{}", installed.display())),
-        "{agents}"
+        err.contains("refuse to update symlink guidance file"),
+        "{err}"
     );
-
-    std::env::remove_var("HELM_AGENT_HOME");
+    assert_eq!(
+        std::fs::read_to_string(outside_agents).unwrap(),
+        "external guidance\n"
+    );
 }
