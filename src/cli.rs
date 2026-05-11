@@ -1,3 +1,4 @@
+use crate::brief;
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
 use crate::launcher::{DispatchPlan, Launcher, TmuxSessionState};
@@ -8,6 +9,7 @@ use crate::store::TaskStore;
 use crate::web_board;
 use anyhow::{bail, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use std::fs;
 use std::path::PathBuf;
 use time::OffsetDateTime;
 
@@ -96,6 +98,7 @@ enum TaskSubcommand {
     Create(CreateArgs),
     Status(StatusArgs),
     Resume(ResumeArgs),
+    Brief(BriefArgs),
     Sync(SyncArgs),
     Dispatch(DispatchArgs),
     Mark(MarkArgs),
@@ -130,6 +133,16 @@ struct StatusArgs {
 #[derive(Debug, Args)]
 struct ResumeArgs {
     id: String,
+}
+
+#[derive(Debug, Args)]
+#[command(about = "Render or write a child-agent task brief")]
+struct BriefArgs {
+    /// Task id to render a child-agent brief for.
+    id: String,
+    /// Write the brief to this task's session directory and record the path.
+    #[arg(long)]
+    write: bool,
 }
 
 #[derive(Debug, Args)]
@@ -485,6 +498,54 @@ fn sync_task(mut task: TaskRecord, store: &TaskStore, launcher: &Launcher) -> Re
     }
 }
 
+fn write_task_brief(
+    store: &TaskStore,
+    task: &mut TaskRecord,
+    events: &[TaskEvent],
+) -> Result<PathBuf> {
+    task.recovery.brief_path = Some(store.brief_path(&task.id));
+    let markdown = brief::render_task_brief(task, events);
+    store.write_brief(&task.id, &markdown)
+}
+
+fn persist_task_brief(
+    store: &TaskStore,
+    task: &mut TaskRecord,
+    events: &[TaskEvent],
+) -> Result<PathBuf> {
+    let path = write_task_brief(store, task, events)?;
+    if let Err(error) = store.save_task(task) {
+        let _ = fs::remove_file(&path);
+        return Err(error);
+    }
+    Ok(path)
+}
+
+fn handle_task_brief(args: BriefArgs, store: &TaskStore) -> Result<()> {
+    let mut task = store.load_task(&args.id)?;
+    let events = store.read_events(&args.id)?;
+
+    if args.write {
+        let now = OffsetDateTime::now_utc();
+        task.touch(now);
+        let event = TaskEvent::new(
+            args.id.clone(),
+            "brief_written",
+            format!("Brief written {}", store.brief_path(&args.id).display()),
+            now,
+        );
+        let mut events_with_write = events;
+        events_with_write.push(event.clone());
+        let path = persist_task_brief(store, &mut task, &events_with_write)?;
+        store.append_event(&event)?;
+        println!("Wrote brief: {}", path.display());
+        return Ok(());
+    }
+
+    print!("{}", brief::render_task_brief(&task, &events));
+    Ok(())
+}
+
 fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
     match task.command {
         TaskSubcommand::List(args) => {
@@ -549,6 +610,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             print!("{}", output::resume_text(&task));
             Ok(())
         }
+        TaskSubcommand::Brief(args) => handle_task_brief(args, store),
         TaskSubcommand::Sync(args) => handle_task_sync(args, store),
         TaskSubcommand::Dispatch(args) => {
             let now = OffsetDateTime::now_utc();
@@ -593,17 +655,9 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             }
 
             let launcher = Launcher::new();
-            let launch = if args.dry_run {
-                launcher.dry_run(&dispatch)
-            } else {
-                launcher.launch(&dispatch)?
-            };
+            let launch = launcher.dry_run(&dispatch);
 
-            task.status = if args.dry_run {
-                TaskStatus::Queued
-            } else {
-                TaskStatus::Running
-            };
+            task.status = TaskStatus::Queued;
             task.assignment.runtime = Some(runtime);
             task.assignment.tmux_session = Some(launch.tmux_session.clone());
             task.recovery.attach_command = Some(launch.attach_command.clone());
@@ -611,13 +665,12 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             task.progress.last_event = if args.dry_run {
                 "Dry-run dispatch recorded".to_string()
             } else {
-                "Dispatch started".to_string()
+                "Dispatch prepared".to_string()
             };
             task.progress.next_action = "Start or inspect child agent session".to_string();
             task.touch(now);
 
-            store.save_task(&task)?;
-            store.append_event(&TaskEvent::new(
+            let event = TaskEvent::new(
                 args.id.clone(),
                 if args.dry_run {
                     "dispatch_planned"
@@ -626,13 +679,50 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 },
                 launch.start_command.clone(),
                 now,
-            ))?;
+            );
+            let mut events = store.read_events(&args.id)?;
+            events.push(event.clone());
+            let prepared_brief_path = persist_task_brief(store, &mut task, &events)?;
+            store.append_event(&event)?;
 
             if args.dry_run {
                 println!("Dry-run dispatch {}", args.id);
-            } else {
-                println!("Started {}", args.id);
+                println!("Start: {}", launch.start_command);
+                println!("Attach: {}", launch.attach_command);
+                println!(
+                    "Resume: {}",
+                    launch
+                        .resume_command
+                        .as_deref()
+                        .unwrap_or("No native resume command recorded")
+                );
+                println!("Brief: {}", prepared_brief_path.display());
+                return Ok(());
             }
+
+            launcher.launch(&dispatch)?;
+            task.status = TaskStatus::Running;
+            task.progress.last_event = "Dispatch started".to_string();
+            task.touch(now);
+            let started_event = TaskEvent::new(
+                args.id.clone(),
+                "dispatch_started",
+                launch.start_command.clone(),
+                now,
+            );
+            events.push(started_event.clone());
+            let final_brief_path = store.brief_path(&task.id);
+            task.recovery.brief_path = Some(final_brief_path.clone());
+            let final_markdown = brief::render_task_brief(&task, &events);
+            let final_result = store
+                .save_task(&task)
+                .and_then(|()| store.write_brief(&task.id, &final_markdown))
+                .and_then(|path| {
+                    store.append_event(&started_event)?;
+                    Ok(path)
+                });
+
+            println!("Started {}", args.id);
             println!("Start: {}", launch.start_command);
             println!("Attach: {}", launch.attach_command);
             println!(
@@ -642,6 +732,21 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                     .as_deref()
                     .unwrap_or("No native resume command recorded")
             );
+            match final_result {
+                Ok(brief_path) => println!("Brief: {}", brief_path.display()),
+                Err(error) => {
+                    let message =
+                        format!("Dispatch state update failed after tmux start: {error:#}");
+                    let _ = store.append_event(&TaskEvent::new(
+                        args.id.clone(),
+                        "dispatch_state_warning",
+                        message.clone(),
+                        now,
+                    ));
+                    println!("Brief: {}", prepared_brief_path.display());
+                    eprintln!("Warning: {message}");
+                }
+            }
             Ok(())
         }
         TaskSubcommand::Mark(args) => {

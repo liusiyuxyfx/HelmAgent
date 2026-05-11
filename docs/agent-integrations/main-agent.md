@@ -32,6 +32,7 @@ helm-agent agent prompt --runtime opencode
 - Run `helm-agent task status <id>` before reporting task state.
 - Run `helm-agent task board` before reporting multi-task state.
 - Run `helm-agent task sync <id>` before reporting whether a delegated tmux session is still active.
+- Run `helm-agent task brief <id>` before handoff when a child agent or human needs copyable task context.
 - Use `helm-agent task triage <id>` to record risk, priority, preferred runtime, and review reason before dispatch.
 - Run `helm-agent task dispatch --dry-run --runtime <runtime> <id>` before starting a child agent.
 - Do not claim code-changing work is complete until `task review --accept` has been run. Before that, report it as ready for review once the task is marked ready and the artifacts are presented to the human.
@@ -100,6 +101,15 @@ Show recovery commands:
 helm-agent task resume PM-20260509-101
 ```
 
+Render or persist a child-agent brief:
+
+```bash
+helm-agent task brief PM-20260509-101
+helm-agent task brief PM-20260509-101 --write
+```
+
+Dry-run and real dispatch write the child-agent brief automatically and record the path on the task.
+
 Sync recorded tmux sessions before reporting child-agent health:
 
 ```bash
@@ -143,6 +153,7 @@ Reason: Small isolated test and implementation task
 Status: ready_for_review
 Attach: tmux attach -t helm-agent-PM-20260509-101-claude
 Resume: claude --resume <session-id>
+Brief: /Users/you/.helm-agent/sessions/PM-20260509-101/brief.md
 Review: Inspect artifacts, then run helm-agent task review PM-20260509-101 --accept or --request-changes "<message>"
 ```
 

@@ -35,6 +35,26 @@ fn task_record_round_trips_through_yaml() {
 }
 
 #[test]
+fn recovery_brief_path_defaults_for_old_task_yaml() {
+    let yaml = r#"
+attach_command: tmux attach -t helm-agent-PM-20260511-001-claude
+resume_command: claude --resume <session-id>
+"#;
+
+    let recovery: helm_agent::domain::Recovery = serde_yaml::from_str(yaml).unwrap();
+
+    assert_eq!(
+        recovery.attach_command.as_deref(),
+        Some("tmux attach -t helm-agent-PM-20260511-001-claude")
+    );
+    assert_eq!(
+        recovery.resume_command.as_deref(),
+        Some("claude --resume <session-id>")
+    );
+    assert!(recovery.brief_path.is_none());
+}
+
+#[test]
 fn task_event_round_trips_through_json() {
     let event = TaskEvent::progress(
         "PM-20260509-001".to_string(),

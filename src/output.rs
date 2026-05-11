@@ -13,15 +13,22 @@ pub fn task_status(task: &TaskRecord, events: &[TaskEvent]) -> String {
         .as_deref()
         .map(|reason| format!("Review: {reason}\n"))
         .unwrap_or_default();
+    let brief = task
+        .recovery
+        .brief_path
+        .as_deref()
+        .map(|path| format!("Brief: {}\n", path.display()))
+        .unwrap_or_default();
 
     format!(
-        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n{review}",
+        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n{brief}{review}",
         id = task.id,
         status = task.status.as_str(),
         title = task.title,
         project = task.project.path.display(),
         progress = last_event,
         next = task.progress.next_action,
+        brief = brief,
         review = review,
     )
 }
@@ -38,10 +45,16 @@ pub fn resume_text(task: &TaskRecord) -> String {
         .as_deref()
         .unwrap_or("No native resume command recorded");
 
-    format!(
-        "{id}\nAttach: {attach}\nResume: {resume}\nNote: tmux attach is the reliable recovery path. Native resume commands may require replacing <session-id> after the child agent records one.\n",
-        id = task.id
-    )
+    let mut output = format!("{id}\nAttach: {attach}\nResume: {resume}\n", id = task.id);
+
+    if let Some(brief_path) = task.recovery.brief_path.as_deref() {
+        writeln!(&mut output, "Brief: {}", brief_path.display()).expect("write to string");
+    }
+
+    output.push_str(
+        "Note: tmux attach is the reliable recovery path. Native resume commands may require replacing <session-id> after the child agent records one.\n",
+    );
+    output
 }
 
 pub fn task_list(tasks: &[TaskRecord]) -> String {
@@ -140,6 +153,10 @@ pub fn task_board(tasks: &[TaskRecord]) -> String {
             }
             if let Some(resume) = task.recovery.resume_command.as_deref() {
                 writeln!(&mut output, "  resume: {resume}").expect("write to string");
+            }
+            if let Some(brief_path) = task.recovery.brief_path.as_deref() {
+                writeln!(&mut output, "  brief: {}", brief_path.display())
+                    .expect("write to string");
             }
         }
     }

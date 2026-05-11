@@ -101,6 +101,8 @@ pub struct Assignment {
 pub struct Recovery {
     pub attach_command: Option<String>,
     pub resume_command: Option<String>,
+    #[serde(default)]
+    pub brief_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,6 +160,7 @@ impl TaskRecord {
             recovery: Recovery {
                 attach_command: None,
                 resume_command: None,
+                brief_path: None,
             },
             progress: Progress {
                 summary: "Created task".to_string(),

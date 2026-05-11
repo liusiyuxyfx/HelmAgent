@@ -106,6 +106,15 @@ helm-agent task sync PM-20260511-001
 helm-agent task sync --all
 ```
 
+Generate a child-agent brief for handoff or review:
+
+```bash
+helm-agent task brief PM-20260511-001
+helm-agent task brief PM-20260511-001 --write
+```
+
+Dry-run and real dispatch write the same brief automatically under the task session directory and show its path in `status`, `resume`, and `board`.
+
 Mark real task state:
 
 ```bash

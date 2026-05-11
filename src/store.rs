@@ -3,7 +3,8 @@ use anyhow::{bail, Context, Result};
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
 pub struct TaskStore {
@@ -37,6 +38,10 @@ impl TaskStore {
 
     pub fn events_path(&self, task_id: &str) -> PathBuf {
         self.session_dir(task_id).join("events.jsonl")
+    }
+
+    pub fn brief_path(&self, task_id: &str) -> PathBuf {
+        self.session_dir(task_id).join("brief.md")
     }
 
     pub fn save_task(&self, task: &TaskRecord) -> Result<()> {
@@ -131,6 +136,18 @@ impl TaskStore {
         Ok(())
     }
 
+    pub fn write_brief(&self, task_id: &str, content: &str) -> Result<PathBuf> {
+        let path = self.brief_path(task_id);
+        let session_dir = self.ensure_session_dir(task_id)?;
+        if path.parent() != Some(session_dir.as_path()) {
+            bail!("brief path escaped session directory {}", path.display());
+        }
+
+        write_file_atomically(&path, content)
+            .with_context(|| format!("write brief {}", path.display()))?;
+        Ok(path)
+    }
+
     pub fn read_events(&self, task_id: &str) -> Result<Vec<TaskEvent>> {
         let path = self.events_path(task_id);
         if !path.exists() {
@@ -163,6 +180,139 @@ impl TaskStore {
 
         Ok(events)
     }
+
+    fn ensure_session_dir(&self, task_id: &str) -> Result<PathBuf> {
+        let sessions_dir = self.root.join("sessions");
+        fs::create_dir_all(&sessions_dir)
+            .with_context(|| format!("create sessions directory {}", sessions_dir.display()))?;
+        ensure_plain_directory(&sessions_dir, "sessions directory")?;
+
+        let session_dir = self.session_dir(task_id);
+        match fs::symlink_metadata(&session_dir) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() {
+                    bail!(
+                        "refuse to use symlink session directory {}",
+                        session_dir.display()
+                    );
+                }
+                if !metadata.is_dir() {
+                    bail!(
+                        "refuse to use non-directory session path {}",
+                        session_dir.display()
+                    );
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&session_dir).with_context(|| {
+                    format!("create session directory {}", session_dir.display())
+                })?;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("inspect session directory {}", session_dir.display())
+                });
+            }
+        }
+
+        let canonical_sessions = sessions_dir
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", sessions_dir.display()))?;
+        let canonical_session = session_dir
+            .canonicalize()
+            .with_context(|| format!("canonicalize {}", session_dir.display()))?;
+        if !canonical_session.starts_with(&canonical_sessions) {
+            bail!(
+                "session directory {} escapes {}",
+                canonical_session.display(),
+                canonical_sessions.display()
+            );
+        }
+
+        Ok(session_dir)
+    }
+}
+
+fn ensure_plain_directory(path: &Path, label: &str) -> Result<()> {
+    let metadata =
+        fs::symlink_metadata(path).with_context(|| format!("inspect {}", path.display()))?;
+    if metadata.file_type().is_symlink() {
+        bail!("refuse to use symlink {label} {}", path.display());
+    }
+    if !metadata.is_dir() {
+        bail!("refuse to use non-directory {label} {}", path.display());
+    }
+    Ok(())
+}
+
+fn write_file_atomically(path: &Path, content: &str) -> Result<()> {
+    let parent = path
+        .parent()
+        .with_context(|| format!("brief path has no parent {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("brief path has invalid file name {}", path.display()))?;
+
+    for attempt in 0..100 {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp_path = parent.join(format!(
+            ".{file_name}.{}.{}.{}.tmp",
+            std::process::id(),
+            unique,
+            attempt
+        ));
+
+        let mut file = match create_new_file_no_follow(&temp_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("create temp brief {}", temp_path.display()));
+            }
+        };
+
+        if let Err(error) = file.write_all(content.as_bytes()) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error).with_context(|| format!("write temp brief {}", temp_path.display()));
+        }
+        drop(file);
+
+        if let Err(error) = fs::rename(&temp_path, path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(error).with_context(|| {
+                format!(
+                    "replace brief {} with {}",
+                    path.display(),
+                    temp_path.display()
+                )
+            });
+        }
+
+        return Ok(());
+    }
+
+    bail!("could not create unique temp file for {}", path.display())
+}
+
+#[cfg(unix)]
+fn create_new_file_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+}
+
+#[cfg(not(unix))]
+fn create_new_file_no_follow(path: &Path) -> std::io::Result<fs::File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
 }
 
 fn task_year(task_id: &str) -> &str {

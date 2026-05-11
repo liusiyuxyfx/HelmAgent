@@ -29,6 +29,21 @@ fn fake_tmux_script(path: &Path, record_path: &Path) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn fake_tmux_chmod_script(path: &Path, record_path: &Path, chmod_path: &Path) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    let chmod_path = chmod_path.display().to_string().replace('\'', "'\\''");
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone > '{record_path}'\nchmod 444 '{chmod_path}'\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn fake_tmux_has_session_script(path: &Path, record_path: &Path, exit_code: i32) {
     let record_path = record_path.display().to_string().replace('\'', "'\\''");
     fs::write(
@@ -432,7 +447,8 @@ fn dry_run_dispatch_records_recovery_commands() {
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
         ))
-        .stdout(contains("Resume: codex resume <session-id> --all"));
+        .stdout(contains("Resume: codex resume <session-id> --all"))
+        .stdout(contains("Brief: "));
 
     let store = TaskStore::new(home.path().to_path_buf());
     let task = store.load_task("PM-20260509-004").unwrap();
@@ -451,6 +467,11 @@ fn dry_run_dispatch_records_recovery_commands() {
         task.recovery.resume_command.as_deref(),
         Some("codex resume <session-id> --all")
     );
+    let brief_path = task.recovery.brief_path.as_ref().unwrap();
+    assert!(brief_path.ends_with("sessions/PM-20260509-004/brief.md"));
+    let brief = fs::read_to_string(brief_path).unwrap();
+    assert!(brief.contains("# Child Agent Task Brief: PM-20260509-004"));
+    assert!(brief.contains("codex resume <session-id> --all"));
     let events = store.read_events("PM-20260509-004").unwrap();
     let event = events.last().unwrap();
     assert_eq!(event.event_type, "dispatch_planned");
@@ -467,7 +488,116 @@ fn dry_run_dispatch_records_recovery_commands() {
             "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
         ))
         .stdout(contains("Resume: codex resume <session-id> --all"))
+        .stdout(contains("Brief: "))
         .stdout(contains("tmux attach is the reliable recovery path"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "board"])
+        .assert()
+        .success()
+        .stdout(contains("brief: "));
+}
+
+#[test]
+fn task_brief_prints_markdown_without_writing() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-B001",
+            "--title",
+            "Prepare child agent handoff",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "event",
+            "PM-20260511-B001",
+            "--type",
+            "progress",
+            "--message",
+            "Defined handoff details",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "brief", "PM-20260511-B001"])
+        .assert()
+        .success()
+        .stdout(contains("# Child Agent Task Brief: PM-20260511-B001"))
+        .stdout(contains("- Title: Prepare child agent handoff"))
+        .stdout(contains("- progress: Defined handoff details"))
+        .stdout(contains("## Child Agent Instructions"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-B001").unwrap();
+    assert!(task.recovery.brief_path.is_none());
+    assert!(!store.brief_path("PM-20260511-B001").exists());
+}
+
+#[test]
+fn task_brief_write_records_path_and_file() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-B002",
+            "--title",
+            "Persist child brief",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "brief", "PM-20260511-B002", "--write"])
+        .assert()
+        .success()
+        .stdout(contains("Wrote brief: "));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-B002").unwrap();
+    let brief_path = task.recovery.brief_path.as_ref().unwrap();
+    assert!(brief_path.ends_with("sessions/PM-20260511-B002/brief.md"));
+    assert!(brief_path.exists());
+    let brief = fs::read_to_string(brief_path).unwrap();
+    assert!(brief.contains("# Child Agent Task Brief: PM-20260511-B002"));
+    assert!(brief.contains("brief_written: Brief written"));
+    let events = store.read_events("PM-20260511-B002").unwrap();
+    let event = events.last().unwrap();
+    assert_eq!(event.event_type, "brief_written");
+    assert!(event.message.contains("brief.md"));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260511-B002"])
+        .assert()
+        .success()
+        .stdout(contains("Brief: "));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "resume", "PM-20260511-B002"])
+        .assert()
+        .success()
+        .stdout(contains("Brief: "));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "board"])
+        .assert()
+        .success()
+        .stdout(contains("brief: "));
 }
 
 #[test]
@@ -601,6 +731,96 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("[running]"));
+}
+
+#[test]
+fn real_dispatch_does_not_launch_when_prelaunch_state_cannot_persist() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-PRE",
+            "--title",
+            "Dispatch with blocked persistence",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task_path = store.task_path("PM-20260511-PRE");
+    let mut permissions = fs::metadata(&task_path).unwrap().permissions();
+    permissions.set_mode(0o444);
+    fs::set_permissions(&task_path, permissions).unwrap();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["task", "dispatch", "PM-20260511-PRE", "--runtime", "claude"])
+        .assert()
+        .failure()
+        .stderr(contains("write task"));
+
+    assert!(!record_path.exists());
+}
+
+#[test]
+fn real_dispatch_prints_recovery_when_postlaunch_state_update_fails() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-POST",
+            "--title",
+            "Dispatch with postlaunch warning",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task_path = store.task_path("PM-20260511-POST");
+    fake_tmux_chmod_script(&tmux_bin, &record_path, &task_path);
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-POST",
+            "--runtime",
+            "claude",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260511-POST"))
+        .stdout(contains(
+            "Attach: tmux attach -t helm-agent-PM-20260511-POST-claude",
+        ))
+        .stdout(contains("Brief: "))
+        .stderr(contains(
+            "Warning: Dispatch state update failed after tmux start",
+        ));
+
+    assert!(record_path.exists());
+    let task = store.load_task("PM-20260511-POST").unwrap();
+    assert_eq!(task.status, TaskStatus::Queued);
+    assert_eq!(task.progress.last_event, "Dispatch prepared");
+    assert!(task.recovery.brief_path.is_some());
 }
 
 #[test]
@@ -931,6 +1151,19 @@ fn sync_help_and_missing_target_explain_target_modes() {
         .assert()
         .failure()
         .stderr(contains("sync requires exactly one target: <id> or --all"));
+}
+
+#[test]
+fn brief_help_explains_target_and_write_mode() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["task", "brief", "--help"])
+        .assert()
+        .success()
+        .stdout(contains("Render or write a child-agent task brief"))
+        .stdout(contains("Task id to render a child-agent brief for"))
+        .stdout(contains("Write the brief to this task's session directory"));
 }
 
 #[test]
@@ -1944,6 +2177,7 @@ fn main_agent_template_contains_required_operating_commands() {
         "helm-agent task create",
         "helm-agent task triage",
         "helm-agent task sync",
+        "helm-agent task brief",
         "helm-agent task dispatch --dry-run",
         "helm-agent task mark",
         "task review --accept",
@@ -1972,5 +2206,37 @@ fn docs_cover_tmux_sync_commands() {
             combined.contains(required),
             "missing `{required}` from docs:\n{combined}"
         );
+    }
+}
+
+#[test]
+fn docs_cover_task_brief_commands() {
+    let readme = fs::read_to_string("README.md").unwrap();
+    let guide = fs::read_to_string("docs/agent-integrations/main-agent.md").unwrap();
+    let combined = format!("{readme}\n{guide}");
+
+    for required in [
+        "helm-agent task brief PM-20260511-001",
+        "helm-agent task brief PM-20260511-001 --write",
+        "child-agent brief",
+    ] {
+        assert!(
+            combined.contains(required),
+            "missing `{required}` from docs:\n{combined}"
+        );
+    }
+}
+
+#[test]
+fn main_agent_guide_uses_consistent_common_task_id_for_brief_flow() {
+    let guide = fs::read_to_string("docs/agent-integrations/main-agent.md").unwrap();
+
+    for required in [
+        "helm-agent task create --id PM-20260509-101",
+        "helm-agent task triage PM-20260509-101",
+        "helm-agent task brief PM-20260509-101",
+        "helm-agent task brief PM-20260509-101 --write",
+    ] {
+        assert!(guide.contains(required), "missing `{required}`:\n{guide}");
     }
 }

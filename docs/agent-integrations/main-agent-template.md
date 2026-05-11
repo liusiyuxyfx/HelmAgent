@@ -7,6 +7,7 @@ Use this when acting as the coordinating agent for coding work. HelmAgent is the
 - Run `helm-agent task board` before reporting multi-task status.
 - Run `helm-agent task status <id>` before reporting one task's status.
 - Run `helm-agent task sync <id>` before reporting delegated tmux session health.
+- Run `helm-agent task brief <id>` when preparing a child-agent handoff.
 - Create a task before delegation:
 
 ```bash
@@ -38,6 +39,13 @@ helm-agent task dispatch --runtime claude --confirm PM-YYYYMMDD-001
 
 ```bash
 helm-agent task resume PM-YYYYMMDD-001
+```
+
+- Use the child-agent brief as the copyable handoff package:
+
+```bash
+helm-agent task brief PM-YYYYMMDD-001
+helm-agent task brief PM-YYYYMMDD-001 --write
 ```
 
 - Before reporting whether child-agent sessions are still active, sync tmux state:
@@ -88,6 +96,7 @@ Last: <last event>
 Next: <next action>
 Attach: <tmux attach command or none>
 Resume: <native resume command or none>
+Brief: <child-agent brief path or none>
 Review: <not ready|ready for review|accepted|changes requested>
 ```
 

@@ -4,6 +4,8 @@ use helm_agent::store::TaskStore;
 use std::env;
 use std::ffi::OsString;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::symlink;
 use std::sync::Mutex;
 use tempfile::tempdir;
 use time::OffsetDateTime;
@@ -97,6 +99,13 @@ fn session_paths_are_rooted_by_task_id() {
             .join("PM-20260509-001")
             .join("events.jsonl")
     );
+    assert_eq!(
+        store.brief_path("PM-20260509-001"),
+        temp.path()
+            .join("sessions")
+            .join("PM-20260509-001")
+            .join("brief.md")
+    );
 }
 
 #[test]
@@ -135,7 +144,75 @@ fn unsafe_task_ids_do_not_alias_safe_ids() {
 
     assert_ne!(store.task_path("A/B"), store.task_path("A_B"));
     assert_ne!(store.events_path("A/B"), store.events_path("A_B"));
+    assert_ne!(store.brief_path("A/B"), store.brief_path("A_B"));
     assert!(store.load_task("A_B").is_err());
+}
+
+#[test]
+fn write_brief_creates_sanitized_session_file() {
+    let temp = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().to_path_buf());
+
+    let path = store
+        .write_brief("A/B", "# Child Agent Task Brief\n")
+        .unwrap();
+
+    assert_eq!(
+        path,
+        temp.path().join("sessions").join("A%2FB").join("brief.md")
+    );
+    assert_eq!(
+        fs::read_to_string(path).unwrap(),
+        "# Child Agent Task Brief\n"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn write_brief_replaces_final_symlink_without_following_it() {
+    let temp = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().join("home"));
+    let session_dir = store.session_dir("PM-20260511-001");
+    fs::create_dir_all(&session_dir).unwrap();
+    let outside_file = outside.path().join("outside.md");
+    fs::write(&outside_file, "outside\n").unwrap();
+    symlink(&outside_file, store.brief_path("PM-20260511-001")).unwrap();
+
+    store
+        .write_brief("PM-20260511-001", "# safe brief\n")
+        .unwrap();
+
+    assert_eq!(fs::read_to_string(&outside_file).unwrap(), "outside\n");
+    assert_eq!(
+        fs::read_to_string(store.brief_path("PM-20260511-001")).unwrap(),
+        "# safe brief\n"
+    );
+    assert!(!fs::symlink_metadata(store.brief_path("PM-20260511-001"))
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}
+
+#[cfg(unix)]
+#[test]
+fn write_brief_rejects_symlink_session_directory() {
+    let temp = tempdir().unwrap();
+    let outside = tempdir().unwrap();
+    let store = TaskStore::new(temp.path().join("home"));
+    fs::create_dir_all(store.root().join("sessions")).unwrap();
+    symlink(outside.path(), store.session_dir("PM-20260511-001")).unwrap();
+
+    let error = store
+        .write_brief("PM-20260511-001", "# unsafe brief\n")
+        .expect_err("symlink session directory should be rejected");
+    let error_text = format!("{error:#}");
+
+    assert!(
+        error_text.contains("refuse to use symlink session directory"),
+        "{error_text}"
+    );
+    assert!(!outside.path().join("brief.md").exists());
 }
 
 #[test]
