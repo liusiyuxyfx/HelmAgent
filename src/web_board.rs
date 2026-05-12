@@ -93,6 +93,9 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .title { display: flex; align-items: baseline; gap: 0.75rem; min-width: 0; }
 h1 { margin: 0; font-size: 1.15rem; line-height: 1.2; letter-spacing: 0; }
 .status { color: var(--muted); font-size: 0.88rem; white-space: nowrap; }
+.top-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.filters { display: flex; align-items: center; flex-wrap: wrap; gap: 0.35rem; }
+.filters button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(20rem, 25rem);
@@ -187,7 +190,16 @@ summary { cursor: pointer; color: var(--muted); }
     <h1>HelmAgent Board</h1>
     <span id="board-status" class="status">Loading</span>
   </div>
-  <button id="refresh-button" type="button">Refresh</button>
+  <div class="top-actions">
+    <div class="filters" aria-label="Task filters">
+      <button type="button" data-status-filter="all" aria-pressed="true">All</button>
+      <button type="button" data-status-filter="running">Running</button>
+      <button type="button" data-status-filter="blocked">Blocked</button>
+      <button type="button" data-status-filter="review">Review</button>
+      <button type="button" data-status-filter="queued">Queued</button>
+    </div>
+    <button id="refresh-button" type="button">Refresh</button>
+  </div>
 </header>
 <section class="layout">
   <div id="lanes" class="lanes" aria-live="polite"></div>
@@ -195,8 +207,12 @@ summary { cursor: pointer; color: var(--muted); }
     <h2 id="detail-title">Select a task</h2>
     <div class="field"><label>Task</label><div id="detail-id">-</div></div>
     <div class="field"><label>Project</label><div id="detail-project">-</div></div>
+    <div class="field"><label>Runtime</label><div id="detail-runtime">-</div></div>
+    <div class="field"><label>Review</label><div id="detail-review">-</div></div>
     <div class="field"><label>Last</label><div id="detail-last">-</div></div>
     <div class="field"><label>Next</label><div id="detail-next">-</div></div>
+    <div class="field"><label>Brief</label><div id="detail-brief">-</div></div>
+    <div class="field"><label>Resume</label><div id="detail-resume">-</div></div>
     <div class="actions">
       <div class="action-row">
         <input id="event-message" placeholder="Progress message">
@@ -231,6 +247,7 @@ const lanesEl = document.getElementById('lanes');
 const statusEl = document.getElementById('board-status');
 let tasks = [];
 let selectedId = null;
+let showStatus = 'all';
 
 const laneDefs = [
   ['Blocked', task => task.status === 'blocked' || task.status === 'waiting_user'],
@@ -266,12 +283,13 @@ async function loadTasks() {
   statusEl.textContent = 'Loading';
   const payload = await api('/api/tasks');
   tasks = payload.tasks;
-  if (!selectedId && tasks.length > 0) selectedId = tasks[0].id;
-  if (selectedId && !tasks.some(task => task.id === selectedId)) {
-    selectedId = tasks.length > 0 ? tasks[0].id : null;
+  const visibleTasks = filteredTasks();
+  if (!selectedId && visibleTasks.length > 0) selectedId = visibleTasks[0].id;
+  if (selectedId && !visibleTasks.some(task => task.id === selectedId)) {
+    selectedId = visibleTasks.length > 0 ? visibleTasks[0].id : null;
   }
   render();
-  statusEl.textContent = `${tasks.length} active`;
+  statusEl.textContent = `${visibleTasks.length} shown / ${tasks.length} active`;
 }
 
 function laneFor(task) {
@@ -279,10 +297,27 @@ function laneFor(task) {
   return found ? found[0] : null;
 }
 
+function matchesFilter(task) {
+  if (showStatus === 'all') return true;
+  if (showStatus === 'review') {
+    return task.review.state === 'required' || ['ready_for_review', 'reviewing', 'needs_changes'].includes(task.status);
+  }
+  if (showStatus === 'blocked') return task.status === 'blocked' || task.status === 'waiting_user';
+  return task.status === showStatus;
+}
+
+function filteredTasks() {
+  return tasks.filter(matchesFilter);
+}
+
 function render() {
   lanesEl.replaceChildren();
+  const visibleTasks = filteredTasks();
+  document.querySelectorAll('[data-status-filter]').forEach(button => {
+    button.setAttribute('aria-pressed', button.dataset.statusFilter === showStatus ? 'true' : 'false');
+  });
   for (const [title] of laneDefs) {
-    const laneTasks = tasks.filter(task => laneFor(task) === title);
+    const laneTasks = visibleTasks.filter(task => laneFor(task) === title);
     if (laneTasks.length === 0) continue;
     const lane = document.createElement('section');
     lane.className = 'lane';
@@ -311,7 +346,6 @@ function taskButton(task) {
   button.addEventListener('click', () => {
     selectedId = task.id;
     render();
-    loadEvents(task.id);
   });
   const id = document.createElement('div');
   id.className = 'task-id';
@@ -332,19 +366,29 @@ function selectedTask() {
 
 function renderDetail() {
   const task = selectedTask();
+  const eventsEl = document.getElementById('events');
   document.querySelectorAll('.actions button, .actions input').forEach(el => { el.disabled = !task; });
   document.getElementById('detail-title').textContent = task ? task.title : 'Select a task';
   document.getElementById('detail-id').textContent = task ? task.id : '-';
   document.getElementById('detail-project').textContent = task ? task.project.path : '-';
+  document.getElementById('detail-runtime').textContent = task ? text(task.assignment.runtime) : '-';
+  document.getElementById('detail-review').textContent = task ? text(task.review.state) : '-';
   document.getElementById('detail-last').textContent = task ? text(task.progress.last_event) : '-';
   document.getElementById('detail-next').textContent = task ? text(task.progress.next_action) : '-';
-  if (task) loadEvents(task.id);
+  document.getElementById('detail-brief').textContent = task ? text(task.recovery.brief_path) : '-';
+  document.getElementById('detail-resume').textContent = task ? text(task.recovery.resume_command) : '-';
+  if (task) {
+    loadEvents(task.id);
+  } else {
+    eventsEl.replaceChildren();
+  }
 }
 
 async function loadEvents(id) {
   const eventsEl = document.getElementById('events');
   try {
     const payload = await api(`/api/tasks/${encodeURIComponent(id)}/events`);
+    if (id !== selectedId) return;
     eventsEl.replaceChildren(...payload.events.slice(-30).reverse().map(event => {
       const row = document.createElement('div');
       row.className = 'event';
@@ -352,6 +396,7 @@ async function loadEvents(id) {
       return row;
     }));
   } catch (error) {
+    if (id !== selectedId) return;
     eventsEl.textContent = error.message;
   }
 }
@@ -372,6 +417,17 @@ async function mutate(path, body) {
 }
 
 document.getElementById('refresh-button').addEventListener('click', loadTasks);
+document.querySelectorAll('[data-status-filter]').forEach(button => {
+  button.addEventListener('click', () => {
+    showStatus = button.dataset.statusFilter;
+    const visibleTasks = filteredTasks();
+    if (selectedId && !visibleTasks.some(task => task.id === selectedId)) {
+      selectedId = visibleTasks.length > 0 ? visibleTasks[0].id : null;
+    }
+    render();
+    statusEl.textContent = `${visibleTasks.length} shown / ${tasks.length} active`;
+  });
+});
 document.getElementById('event-button').addEventListener('click', () => mutate('/event', {
   event_type: 'progress',
   message: document.getElementById('event-message').value || 'Progress updated'

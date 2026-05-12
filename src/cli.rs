@@ -52,6 +52,7 @@ struct AcpAgentCommand {
 #[derive(Debug, Subcommand)]
 enum AcpAgentSubcommand {
     Add(AcpAgentAddArgs),
+    Check(AcpAgentCheckArgs),
     List,
     Remove(AcpAgentRemoveArgs),
 }
@@ -65,6 +66,11 @@ struct AcpAgentAddArgs {
     args: Vec<String>,
     #[arg(long = "env")]
     env: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct AcpAgentCheckArgs {
+    name: String,
 }
 
 #[derive(Debug, Args)]
@@ -442,6 +448,52 @@ fn handle_acp(acp: AcpCommand, store: &TaskStore) -> Result<()> {
             AcpAgentSubcommand::List => {
                 let agents = acp_adapter::load_acp_agents(store)?;
                 print!("{}", acp_adapter::render_acp_agent_list(&agents));
+                Ok(())
+            }
+            AcpAgentSubcommand::Check(args) => {
+                let agent = acp_adapter::get_acp_agent(store, &args.name)?;
+                let check_dir = store.root().join("acp").join(format!(
+                    ".check-{}-{}",
+                    std::process::id(),
+                    OffsetDateTime::now_utc().unix_timestamp_nanos()
+                ));
+                fs::create_dir_all(&check_dir).with_context(|| {
+                    format!("create ACP check directory {}", check_dir.display())
+                })?;
+                let check_result = acp_adapter::dispatch_prompt(
+                    &agent,
+                    &check_dir,
+                    acp_adapter::ACP_CHECK_PROMPT.to_string(),
+                );
+                let cleanup_result = fs::remove_dir_all(&check_dir);
+                let result = match check_result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        if let Err(cleanup_error) = cleanup_result {
+                            eprintln!(
+                                "Warning: ACP check cleanup failed for {}: {cleanup_error}",
+                                check_dir.display()
+                            );
+                        }
+                        return Err(error);
+                    }
+                };
+                if let Err(cleanup_error) = cleanup_result {
+                    eprintln!(
+                        "Warning: ACP check cleanup failed for {}: {cleanup_error}",
+                        check_dir.display()
+                    );
+                }
+                if !acp_adapter::is_successful_stop_reason(&result.stop_reason) {
+                    bail!(
+                        "ACP agent {} check failed: stop reason {}",
+                        args.name,
+                        result.stop_reason
+                    );
+                }
+                println!("ACP agent {} ok", args.name);
+                println!("Session: {}", result.session_id);
+                println!("Stop: {}", result.stop_reason);
                 Ok(())
             }
             AcpAgentSubcommand::Remove(args) => {

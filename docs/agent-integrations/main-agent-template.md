@@ -8,6 +8,12 @@ Use this when acting as the coordinating agent for coding work. HelmAgent is the
 - Run `helm-agent task status <id>` before reporting one task's status.
 - Run `helm-agent task sync <id>` before reporting delegated tmux session health.
 - Run `helm-agent task brief <id>` when preparing a child-agent handoff.
+- Serve the browser board when a human needs to review multiple tasks:
+
+```bash
+helm-agent board serve --host 127.0.0.1 --port 8765
+```
+
 - Create a task before delegation:
 
 ```bash
@@ -117,3 +123,18 @@ Review: <not ready|ready for review|accepted|changes requested>
 ```
 
 Report HelmAgent state, not memory or assumptions.
+
+## Dogfood Loop
+
+Use this sequence when developing HelmAgent with HelmAgent itself:
+
+```bash
+helm-agent task board
+helm-agent task create --id PM-YYYYMMDD-001 --title "<short task title>" --project .
+helm-agent task triage PM-YYYYMMDD-001 --risk low --priority normal --runtime claude
+helm-agent task dispatch --dry-run --runtime claude PM-YYYYMMDD-001
+helm-agent task sync --all
+helm-agent task mark PM-YYYYMMDD-001 --ready-for-review --message "<artifacts and verification>"
+# Human or authorized main agent only:
+helm-agent task review PM-YYYYMMDD-001 --accept
+```

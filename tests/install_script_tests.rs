@@ -263,14 +263,35 @@ fn init_project_dry_run_prints_safe_cli_delegation() {
     assert!(success, "{stdout}\n{stderr}");
     assert!(
         stdout.contains(&format!(
-            "helm-agent project init --path {project_path} --agent codex"
+            "helm-agent project init --path {project_path} --agent all"
         )),
         "{stdout}"
     );
 }
 
 #[test]
-fn init_project_writes_agents_include_and_installs_template() {
+fn init_project_dry_run_accepts_agent_override() {
+    let project = tempdir().unwrap();
+    let project_path = project.path().to_string_lossy().to_string();
+    let (success, stdout, stderr) = run_install_script(&[
+        "init-project",
+        project_path.as_str(),
+        "--agent",
+        "claude",
+        "--dry-run",
+    ]);
+
+    assert!(success, "{stdout}\n{stderr}");
+    assert!(
+        stdout.contains(&format!(
+            "helm-agent project init --path {project_path} --agent claude"
+        )),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn init_project_writes_agent_includes_and_installs_template() {
     let project = tempdir().unwrap();
     let home = tempdir().unwrap();
     let project_path = project.path().to_string_lossy().to_string();
@@ -288,13 +309,20 @@ fn init_project_writes_agents_include_and_installs_template() {
         .unwrap()
         .join("main-agent-template.md");
     let agents_file = project.path().join("AGENTS.md");
+    let claude_file = project.path().join("CLAUDE.md");
     assert!(template_path.exists(), "{stdout}");
     assert!(agents_file.exists(), "{stdout}");
+    assert!(claude_file.exists(), "{stdout}");
 
     let agents = std::fs::read_to_string(agents_file).unwrap();
     assert!(
         agents.contains(&format!("@{}", template_path.to_string_lossy())),
         "{agents}"
+    );
+    let claude = std::fs::read_to_string(claude_file).unwrap();
+    assert!(
+        claude.contains(&format!("@{}", template_path.to_string_lossy())),
+        "{claude}"
     );
 
     let template = std::fs::read_to_string(template_path).unwrap();

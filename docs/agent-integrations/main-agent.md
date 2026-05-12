@@ -170,6 +170,22 @@ Serve the read-only browser board when useful:
 helm-agent board serve --host 127.0.0.1 --port 8765
 ```
 
+## Dogfood Loop
+
+When using HelmAgent to manage HelmAgent development, start from the board, record the
+task, dry-run the dispatch, sync active sessions before status reports, and leave the
+task in review until the human accepts it:
+
+```bash
+helm-agent task board
+helm-agent task create --id PM-20260509-101 --title "Add retry tests" --project .
+helm-agent task triage PM-20260509-101 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
+helm-agent task dispatch --dry-run --runtime claude PM-20260509-101
+helm-agent task sync --all
+helm-agent task mark PM-20260509-101 --ready-for-review --message "Implementation and tests are ready"
+helm-agent task review PM-20260509-101 --accept
+```
+
 ## Delegation Summary Template
 
 ```text

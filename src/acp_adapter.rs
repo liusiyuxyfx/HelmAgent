@@ -17,6 +17,8 @@ use tokio_util::compat::{TokioAsyncReadCompatExt, TokioAsyncWriteCompatExt};
 
 const DEFAULT_HANDOFF_TIMEOUT: Duration = Duration::from_secs(300);
 const EXITED_AGENT_GRACE_PERIOD: Duration = Duration::from_millis(200);
+pub const ACP_CHECK_PROMPT: &str =
+    "HelmAgent ACP check: reply briefly to confirm this agent can receive a prompt.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AcpAgentConfig {
@@ -115,6 +117,10 @@ pub fn format_agent_command(config: &AcpAgentConfig) -> String {
         .chain(config.args.iter().map(|arg| shell_quote(arg)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub fn is_successful_stop_reason(stop_reason: &str) -> bool {
+    stop_reason == "EndTurn"
 }
 
 pub fn dispatch_prompt(

@@ -143,13 +143,15 @@ one-shot prompt over stdio.
 ```bash
 helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
 helm-agent acp agent list
+helm-agent acp agent check local-acp
 helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-run
 helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
 ```
 
-ACP dispatch records the ACP session id and moves the task to `ready_for_review` after
-the handoff completes. Failed or timed-out ACP dispatches move the task to
-`needs_changes` so the agent config can be fixed and retried.
+Use `acp agent check` before real task dispatch to verify the configured stdio
+handshake. ACP dispatch records the ACP session id and moves the task to
+`ready_for_review` after the handoff completes. Failed or timed-out ACP dispatches
+move the task to `needs_changes` so the agent config can be fixed and retried.
 
 ## Common Commands
 

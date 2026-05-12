@@ -131,11 +131,12 @@ HelmAgent 可以注册 ACP 兼容 Agent，并通过 stdio 把生成的任务 bri
 ```bash
 helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
 helm-agent acp agent list
+helm-agent acp agent check local-acp
 helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-run
 helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
 ```
 
-ACP 分发会记录 ACP session id，并在交接完成后把任务移动到 `ready_for_review`。失败或超时的 ACP 分发会把任务移动到 `needs_changes`，方便修复 Agent 配置后重试。
+真实任务分发前，先用 `acp agent check` 验证配置的 stdio 握手是否可用。ACP 分发会记录 ACP session id，并在交接完成后把任务移动到 `ready_for_review`。失败或超时的 ACP 分发会把任务移动到 `needs_changes`，方便修复 Agent 配置后重试。
 
 ## 常用命令
 

@@ -133,7 +133,10 @@ The legacy installer path delegates to the safe CLI updater. It works after `hel
 INSTALLER=/tmp/helm-agent-install.sh
 curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" init-project /path/to/project
 sh ./install.sh init-project /path/to/project
+sh ./install.sh init-project /path/to/project --agent claude
 ```
+
+Installer `init-project` defaults to `--agent all`.
 
 If the template has not been installed yet, both project setup paths install or bootstrap it first. They only modify `$HOME/.helm-agent` and the project you pass. They do not touch global Claude Code or Codex configuration.
 

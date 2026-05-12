@@ -45,6 +45,18 @@ fn interactive_board_html_contains_action_token_and_app_controls() {
     assert!(html.contains("Ready For Review"), "{html}");
     assert!(html.contains("Request Changes"), "{html}");
     assert!(html.contains("Sync"), "{html}");
+    assert!(html.contains("data-status-filter"), "{html}");
+    assert!(html.contains("showStatus = 'all'"), "{html}");
+    assert!(html.contains("mutate('/event'"), "{html}");
+    assert!(html.contains("mutate('/mark'"), "{html}");
+    assert!(html.contains("mutate('/review'"), "{html}");
+    assert!(html.contains("mutate('/sync'"), "{html}");
+    assert!(html.contains("detail-runtime"), "{html}");
+    assert!(html.contains("detail-review"), "{html}");
+    assert!(html.contains("detail-brief"), "{html}");
+    assert!(html.contains("detail-resume"), "{html}");
+    assert!(html.contains("eventsEl.replaceChildren();"), "{html}");
+    assert!(html.contains("if (id !== selectedId) return;"), "{html}");
 }
 
 #[test]
@@ -212,6 +224,55 @@ fn api_write_routes_reject_missing_action_token() {
 }
 
 #[test]
+fn api_write_routes_reject_wrong_action_token() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-040", "Reject wrong token"))
+        .unwrap();
+    let body = r#"{"event_type":"progress","message":"Should fail"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-040/event HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: wrong\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(
+        response.starts_with("HTTP/1.1 403 Forbidden\r\n"),
+        "{response}"
+    );
+    assert!(response.contains("invalid action token"), "{response}");
+}
+
+#[test]
+fn api_events_returns_task_event_log() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-041", "Events via API"))
+        .unwrap();
+    store
+        .append_event(&helm_agent::domain::TaskEvent::progress(
+            "PM-20260511-041".to_string(),
+            "First event".to_string(),
+            OffsetDateTime::UNIX_EPOCH + Duration::seconds(1),
+        ))
+        .unwrap();
+
+    let response = web_board::handle_board_http_request(
+        "GET /api/tasks/PM-20260511-041/events HTTP/1.1\r\nHost: localhost:8765\r\n\r\n",
+        &store,
+        "token",
+    );
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    assert!(response.contains(r#""ok":true"#), "{response}");
+    assert!(response.contains("First event"), "{response}");
+}
+
+#[test]
 fn api_event_records_progress_with_valid_token() {
     let home = tempdir().unwrap();
     let store = TaskStore::new(home.path().to_path_buf());
@@ -254,6 +315,56 @@ fn api_routes_decode_encoded_task_ids() {
     assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
     let updated = store.load_task("PM/Space 037").unwrap();
     assert_eq!(updated.progress.last_event, "Decoded id works");
+}
+
+#[test]
+fn api_mark_ready_for_review_updates_review_state() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    store
+        .save_task(&task("PM-20260511-042", "Ready via API"))
+        .unwrap();
+    let body = r#"{"action":"ready_for_review","message":"Ready now"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-042/mark HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let updated = store.load_task("PM-20260511-042").unwrap();
+    assert_eq!(updated.status, TaskStatus::ReadyForReview);
+    assert_eq!(
+        updated.review.state,
+        helm_agent::domain::ReviewState::Required
+    );
+    assert_eq!(updated.progress.last_event, "Ready now");
+}
+
+#[test]
+fn api_mark_triaged_moves_task_back_to_triage() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut record = task("PM-20260511-043", "Triaged via API");
+    record.status = TaskStatus::Blocked;
+    record.progress.blocker = Some("Old blocker".to_string());
+    store.save_task(&record).unwrap();
+    let body = r#"{"action":"triaged","message":"Needs another pass"}"#;
+    let request = format!(
+        "POST /api/tasks/PM-20260511-043/mark HTTP/1.1\r\nHost: localhost:8765\r\nX-Helm-Agent-Token: token\r\nContent-Length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+
+    let response = web_board::handle_board_http_request(&request, &store, "token");
+
+    assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+    let updated = store.load_task("PM-20260511-043").unwrap();
+    assert_eq!(updated.status, TaskStatus::Triaged);
+    assert_eq!(updated.progress.blocker, None);
+    assert_eq!(updated.progress.next_action, "Dispatch or defer task");
 }
 
 #[test]

@@ -165,7 +165,7 @@ for line in sys.stdin:
                 os.chmod(task_path, 0o444)
             except OSError:
                 pass
-        result = {"stopReason": "end_turn"}
+        result = {"stopReason": os.environ.get("HELM_ACP_STOP_REASON", "end_turn")}
     else:
         print(json.dumps({
             "jsonrpc": "2.0",
@@ -398,6 +398,104 @@ fn acp_agent_add_rejects_invalid_env_pair() {
         .assert()
         .failure()
         .stderr(contains("env must be KEY=VALUE"));
+}
+
+#[test]
+fn acp_agent_check_verifies_configured_agent_handshake() {
+    let home = tempdir().unwrap();
+    let fake_agent = home.path().join("fake-acp-agent.py");
+    let prompt_record = home.path().join("check-prompt.json");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "fake",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            &format!("HELM_ACP_RECORD={}", prompt_record.display()),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "agent", "check", "fake"])
+        .assert()
+        .success()
+        .stdout(contains("ACP agent fake ok"))
+        .stdout(contains("Session: fake-acp-session-1"))
+        .stdout(contains("Stop:"));
+
+    let prompt = fs::read_to_string(prompt_record).unwrap();
+    assert!(prompt.contains("HelmAgent ACP check"), "{prompt}");
+    let acp_dir = home.path().join("acp");
+    let leftovers = fs::read_dir(&acp_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(leftovers, vec!["agents.yaml"], "{leftovers:?}");
+}
+
+#[test]
+fn acp_agent_check_reports_handshake_failure() {
+    let home = tempdir().unwrap();
+    let failing_agent = home.path().join("failing-acp-agent.sh");
+    fs::write(&failing_agent, "#!/bin/sh\nexit 9\n").unwrap();
+    let mut permissions = fs::metadata(&failing_agent).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&failing_agent, permissions).unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "failing",
+            "--command",
+            failing_agent.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "agent", "check", "failing"])
+        .assert()
+        .failure()
+        .stderr(contains("ACP agent exited before handoff"));
+}
+
+#[test]
+fn acp_agent_check_rejects_non_success_stop_reason() {
+    let home = tempdir().unwrap();
+    let fake_agent = home.path().join("fake-acp-agent.py");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "fake",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            "HELM_ACP_STOP_REASON=max_tokens",
+            "--env",
+            "HELM_ACP_EXIT_AFTER_PROMPT=1",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "agent", "check", "fake"])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "ACP agent fake check failed: stop reason MaxTokens",
+        ));
 }
 
 #[test]
@@ -3383,13 +3481,16 @@ fn main_agent_template_contains_required_operating_commands() {
         "helm-agent task create",
         "helm-agent task triage",
         "helm-agent task sync",
+        "helm-agent task sync --all",
         "helm-agent task brief",
         "helm-agent task dispatch --dry-run",
+        "helm-agent board serve --host 127.0.0.1 --port 8765",
         "--send-brief",
         "helm-agent task mark",
         "task review --accept",
         "--confirm",
         "Do not claim code-changing work is complete",
+        "Dogfood Loop",
     ] {
         assert!(
             template.contains(required),
@@ -3493,4 +3594,43 @@ fn send_brief_docs_keep_ids_consistent_per_document() {
             .contains("helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief"),
         "{template}"
     );
+}
+
+#[test]
+fn dogfood_runbook_and_make_target_cover_dry_run_loop() {
+    let runbook = fs::read_to_string("docs/dogfood.md").unwrap();
+    let makefile = fs::read_to_string("Makefile").unwrap();
+
+    for required in [
+        "HELM_AGENT_HOME",
+        "helm-agent project init --path",
+        "helm-agent task create --id PM-20260512-DOGFOOD",
+        "helm-agent task triage PM-20260512-DOGFOOD",
+        "helm-agent task dispatch --dry-run --runtime claude PM-20260512-DOGFOOD",
+        "helm-agent task sync --all",
+        "helm-agent task mark PM-20260512-DOGFOOD --ready-for-review",
+        "Human or authorized main agent only",
+    ] {
+        assert!(
+            runbook.contains(required),
+            "missing `{required}` from dogfood docs"
+        );
+    }
+
+    for required in [
+        "dogfood-dry-run:",
+        "HELM_AGENT_HOME",
+        "cargo run --quiet --bin helm-agent -- project init --path",
+        "cargo run --quiet --bin helm-agent -- task create --id PM-20260512-DOGFOOD",
+        "cargo run --quiet --bin helm-agent -- task triage PM-20260512-DOGFOOD",
+        "cargo run --quiet --bin helm-agent -- task dispatch --dry-run --runtime claude PM-20260512-DOGFOOD",
+        "cargo run --quiet --bin helm-agent -- task sync --all",
+        "cargo run --quiet --bin helm-agent -- task mark PM-20260512-DOGFOOD --ready-for-review",
+        "cargo run --quiet --bin helm-agent -- task review PM-20260512-DOGFOOD --accept",
+    ] {
+        assert!(
+            makefile.contains(required),
+            "missing `{required}` from Makefile"
+        );
+    }
 }

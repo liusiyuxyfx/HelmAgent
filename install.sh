@@ -21,7 +21,7 @@ Usage:
   install.sh repair [--dry-run]
   install.sh doctor [--dry-run]
   install.sh uninstall [--purge] [--dry-run]
-  install.sh init-project <path> [--dry-run]
+  install.sh init-project <path> [--agent all|codex|claude|opencode] [--dry-run]
 
 Environment:
   HELM_AGENT_REPO      Git repository to install from
@@ -78,6 +78,35 @@ parse_uninstall_flags() {
                 ;;
             --purge)
                 PURGE=1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+        shift
+    done
+}
+
+parse_init_project_flags() {
+    INIT_PROJECT_AGENT=all
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --dry-run)
+                DRY_RUN=1
+                ;;
+            --agent)
+                shift
+                if [ "$#" -eq 0 ]; then
+                    return 1
+                fi
+                case "$1" in
+                    all|codex|claude|opencode)
+                        INIT_PROJECT_AGENT=$1
+                        ;;
+                    *)
+                        return 1
+                        ;;
+                esac
                 ;;
             *)
                 return 1
@@ -459,15 +488,16 @@ uninstall_cmd() {
 
 init_project_cmd() {
     project_path=$1
+    agent=${INIT_PROJECT_AGENT:-all}
 
     plan "init project $project_path"
-    plan "helm-agent project init --path $project_path --agent codex"
+    plan "helm-agent project init --path $project_path --agent $agent"
 
     if [ "$DRY_RUN" -eq 0 ]; then
         if is_local_checkout && have cargo; then
-            run cargo run --quiet --bin helm-agent -- project init --path "$project_path" --agent codex
+            run cargo run --quiet --bin helm-agent -- project init --path "$project_path" --agent "$agent"
         elif have helm-agent; then
-            run helm-agent project init --path "$project_path" --agent codex
+            run helm-agent project init --path "$project_path" --agent "$agent"
         else
             log "missing: helm-agent is required for safe project initialization; run install first"
             exit 1
@@ -511,7 +541,7 @@ case "$command_name" in
         fi
         project_path=$1
         shift
-        parse_common_flags "$@" || { usage >&2; exit 1; }
+        parse_init_project_flags "$@" || { usage >&2; exit 1; }
         init_project_cmd "$project_path"
         ;;
     -h|--help|help)
