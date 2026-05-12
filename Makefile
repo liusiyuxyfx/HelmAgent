@@ -1,4 +1,4 @@
-.PHONY: install update repair doctor uninstall uninstall-purge test fmt dogfood-dry-run
+.PHONY: install update repair doctor uninstall uninstall-purge test fmt dogfood-dry-run real-run-dry-run real-run-tmux real-run-acp
 
 install:
 	sh ./install.sh install
@@ -37,3 +37,12 @@ dogfood-dry-run:
 	cargo run --quiet --bin helm-agent -- task sync --all; \
 	cargo run --quiet --bin helm-agent -- task mark PM-20260512-DOGFOOD --ready-for-review --message "Dogfood dry-run artifacts are ready"; \
 	cargo run --quiet --bin helm-agent -- task review PM-20260512-DOGFOOD --accept
+
+real-run-dry-run:
+	HELM_AGENT_BIN="cargo run --quiet --bin helm-agent --" sh scripts/real_run_smoke.sh --mode dry-run
+
+real-run-tmux:
+	HELM_AGENT_BIN="cargo run --quiet --bin helm-agent --" sh scripts/real_run_smoke.sh --mode tmux
+
+real-run-acp:
+	HELM_AGENT_BIN="cargo run --quiet --bin helm-agent --" sh scripts/real_run_smoke.sh --mode acp

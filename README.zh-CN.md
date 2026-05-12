@@ -116,6 +116,9 @@ helm-agent task dispatch PM-20260511-001 --runtime claude --dry-run
 helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
 ```
 
+如需按真实 tmux 或 ACP 交接路径做本地试运行，见
+[docs/quickstart-real-run.md](docs/quickstart-real-run.md)。
+
 把任务交给人工 review：
 
 ```bash
@@ -235,6 +238,7 @@ git diff --check
 ## 文档
 
 - [安装指南](docs/install.md)
+- [真实试运行快速开始](docs/quickstart-real-run.md)
 - [主 Agent 集成](docs/agent-integrations/main-agent.md)
 
 ## 许可证

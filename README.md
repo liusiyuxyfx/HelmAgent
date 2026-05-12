@@ -127,6 +127,9 @@ helm-agent task dispatch PM-20260511-001 --runtime claude --dry-run
 helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
 ```
 
+For a guided local smoke test with real tmux or ACP handoff options, see
+[docs/quickstart-real-run.md](docs/quickstart-real-run.md).
+
 Mark the task for human review:
 
 ```bash
@@ -258,6 +261,7 @@ git diff --check
 ## Documentation
 
 - [Install Guide](docs/install.md)
+- [Real Run Quickstart](docs/quickstart-real-run.md)
 - [Main-Agent Integration](docs/agent-integrations/main-agent.md)
 
 ## License
