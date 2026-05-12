@@ -98,8 +98,8 @@ helm-agent agent prompt --runtime opencode
 创建并分诊任务：
 
 ```bash
-helm-agent task create --id PM-20260512-001 --title "Add retry tests" --project .
-helm-agent task triage PM-20260512-001 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
+helm-agent task create --id PM-20260511-001 --title "Add retry tests" --project .
+helm-agent task triage PM-20260511-001 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
 ```
 
 打开任务看板：
@@ -112,16 +112,16 @@ helm-agent board serve --host 127.0.0.1 --port 8765
 准备或启动子 Agent 交接：
 
 ```bash
-helm-agent task dispatch PM-20260512-001 --runtime claude --dry-run
-helm-agent task dispatch PM-20260512-001 --runtime claude --send-brief
+helm-agent task dispatch PM-20260511-001 --runtime claude --dry-run
+helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
 ```
 
 把任务交给人工 review：
 
 ```bash
-helm-agent task mark PM-20260512-001 --ready-for-review --message "Implementation and tests are ready"
-helm-agent task review PM-20260512-001 --request-changes "Add a regression test before merging"
-helm-agent task review PM-20260512-001 --accept
+helm-agent task mark PM-20260511-001 --ready-for-review --message "Implementation and tests are ready"
+helm-agent task review PM-20260511-001 --request-changes "Add a regression test before merging"
+helm-agent task review PM-20260511-001 --accept
 ```
 
 ## ACP Agent
@@ -131,8 +131,8 @@ HelmAgent 可以注册 ACP 兼容 Agent，并通过 stdio 把生成的任务 bri
 ```bash
 helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
 helm-agent acp agent list
-helm-agent task dispatch PM-20260512-001 --runtime acp --agent local-acp --dry-run
-helm-agent task dispatch PM-20260512-001 --runtime acp --agent local-acp --confirm
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-run
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
 ```
 
 ACP 分发会记录 ACP session id，并在交接完成后把任务移动到 `ready_for_review`。失败或超时的 ACP 分发会把任务移动到 `needs_changes`，方便修复 Agent 配置后重试。
@@ -150,29 +150,29 @@ helm-agent task list --status blocked --status ready_for_review
 查看或恢复单个任务：
 
 ```bash
-helm-agent task status PM-20260512-001
-helm-agent task resume PM-20260512-001
+helm-agent task status PM-20260511-001
+helm-agent task resume PM-20260511-001
 ```
 
 生成子 Agent brief：
 
 ```bash
-helm-agent task brief PM-20260512-001
-helm-agent task brief PM-20260512-001 --write
+helm-agent task brief PM-20260511-001
+helm-agent task brief PM-20260511-001 --write
 ```
 
 手动记录进展：
 
 ```bash
-helm-agent task event PM-20260512-001 --type progress --message "Tests are running"
-helm-agent task mark PM-20260512-001 --blocked --message "Waiting for API contract confirmation"
-helm-agent task mark PM-20260512-001 --ready-for-review --message "Ready for review"
+helm-agent task event PM-20260511-001 --type progress --message "Tests are running"
+helm-agent task mark PM-20260511-001 --blocked --message "Waiting for API contract confirmation"
+helm-agent task mark PM-20260511-001 --ready-for-review --message "Ready for review"
 ```
 
-汇总 tmux 会话健康状态，再向人汇报子 Agent 进度：
+汇总 tmux 会话健康状态，再向人汇报委派会话健康状态（delegated session health）：
 
 ```bash
-helm-agent task sync PM-20260512-001
+helm-agent task sync PM-20260511-001
 helm-agent task sync --all
 ```
 

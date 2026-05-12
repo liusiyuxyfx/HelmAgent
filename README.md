@@ -109,8 +109,8 @@ helm-agent agent prompt --runtime opencode
 Create and triage a task:
 
 ```bash
-helm-agent task create --id PM-20260512-001 --title "Add retry tests" --project .
-helm-agent task triage PM-20260512-001 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
+helm-agent task create --id PM-20260511-001 --title "Add retry tests" --project .
+helm-agent task triage PM-20260511-001 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
 ```
 
 Open the task board:
@@ -123,16 +123,16 @@ helm-agent board serve --host 127.0.0.1 --port 8765
 Prepare or start a child-agent handoff:
 
 ```bash
-helm-agent task dispatch PM-20260512-001 --runtime claude --dry-run
-helm-agent task dispatch PM-20260512-001 --runtime claude --send-brief
+helm-agent task dispatch PM-20260511-001 --runtime claude --dry-run
+helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
 ```
 
 Mark the task for human review:
 
 ```bash
-helm-agent task mark PM-20260512-001 --ready-for-review --message "Implementation and tests are ready"
-helm-agent task review PM-20260512-001 --request-changes "Add a regression test before merging"
-helm-agent task review PM-20260512-001 --accept
+helm-agent task mark PM-20260511-001 --ready-for-review --message "Implementation and tests are ready"
+helm-agent task review PM-20260511-001 --request-changes "Add a regression test before merging"
+helm-agent task review PM-20260511-001 --accept
 ```
 
 ## ACP Agents
@@ -143,8 +143,8 @@ one-shot prompt over stdio.
 ```bash
 helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
 helm-agent acp agent list
-helm-agent task dispatch PM-20260512-001 --runtime acp --agent local-acp --dry-run
-helm-agent task dispatch PM-20260512-001 --runtime acp --agent local-acp --confirm
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-run
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
 ```
 
 ACP dispatch records the ACP session id and moves the task to `ready_for_review` after
@@ -164,29 +164,29 @@ helm-agent task list --status blocked --status ready_for_review
 Inspect or resume one task:
 
 ```bash
-helm-agent task status PM-20260512-001
-helm-agent task resume PM-20260512-001
+helm-agent task status PM-20260511-001
+helm-agent task resume PM-20260511-001
 ```
 
 Generate a child-agent brief:
 
 ```bash
-helm-agent task brief PM-20260512-001
-helm-agent task brief PM-20260512-001 --write
+helm-agent task brief PM-20260511-001
+helm-agent task brief PM-20260511-001 --write
 ```
 
 Record progress manually:
 
 ```bash
-helm-agent task event PM-20260512-001 --type progress --message "Tests are running"
-helm-agent task mark PM-20260512-001 --blocked --message "Waiting for API contract confirmation"
-helm-agent task mark PM-20260512-001 --ready-for-review --message "Ready for review"
+helm-agent task event PM-20260511-001 --type progress --message "Tests are running"
+helm-agent task mark PM-20260511-001 --blocked --message "Waiting for API contract confirmation"
+helm-agent task mark PM-20260511-001 --ready-for-review --message "Ready for review"
 ```
 
-Sync tmux-backed session health before reporting delegated work:
+Sync tmux-backed session health before reporting delegated session health:
 
 ```bash
-helm-agent task sync PM-20260512-001
+helm-agent task sync PM-20260511-001
 helm-agent task sync --all
 ```
 
