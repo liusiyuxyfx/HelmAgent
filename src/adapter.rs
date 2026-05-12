@@ -33,6 +33,13 @@ impl RuntimeAdapter {
                 native_resume_available: false,
                 acp_supported: false,
             },
+            AgentRuntime::Acp => Self {
+                runtime,
+                command: "acp",
+                native_resume_template: "",
+                native_resume_available: false,
+                acp_supported: true,
+            },
         }
     }
 }

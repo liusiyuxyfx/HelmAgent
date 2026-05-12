@@ -33,6 +33,7 @@ pub enum AgentRuntime {
     Codex,
     #[serde(rename = "opencode")]
     OpenCode,
+    Acp,
 }
 
 impl AgentRuntime {
@@ -41,6 +42,7 @@ impl AgentRuntime {
             AgentRuntime::Claude => "claude",
             AgentRuntime::Codex => "codex",
             AgentRuntime::OpenCode => "opencode",
+            AgentRuntime::Acp => "acp",
         }
     }
 }

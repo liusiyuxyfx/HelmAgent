@@ -48,7 +48,7 @@ helm-agent agent prompt --runtime codex
 helm-agent agent prompt --runtime claude
 ```
 
-Open a read-only local board:
+Open a local interactive board:
 
 ```bash
 helm-agent board serve --host 127.0.0.1 --port 8765
@@ -62,6 +62,7 @@ helm-agent board serve --host 127.0.0.1 --port 8765
 - Policy gates that require `--confirm` before paid Codex or elevated-risk real dispatches.
 - Attach, resume, and review checkpoints for recovering delegated work.
 - Review-queue commands for triage, status updates, and human handoff.
+- ACP agent registry and one-shot ACP brief handoff for compatible child agents.
 
 ## Development
 
@@ -122,6 +123,17 @@ helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
 ```
 
 If tmux launch succeeds but brief injection fails, HelmAgent still prints attach/resume/brief recovery output and reports `Brief sent: no`.
+
+Register and dispatch to an ACP-compatible agent over stdio:
+
+```bash
+helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
+helm-agent acp agent list
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-run
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
+```
+
+ACP real dispatch sends the generated child-agent brief as a prompt, records the ACP session id, and marks the task ready for human review after the one-shot handoff completes. `--confirm` is required because cost and write behavior depend on the configured ACP agent.
 
 Mark real task state:
 

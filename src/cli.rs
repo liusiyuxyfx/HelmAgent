@@ -1,3 +1,4 @@
+use crate::acp_adapter::{self, AcpAgentConfig};
 use crate::brief;
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
@@ -8,7 +9,7 @@ use crate::policy::{DispatchDecision, PolicyInput};
 use crate::store::TaskStore;
 use crate::task_actions::{self, MarkAction, ReviewAction};
 use crate::web_board;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
 use std::path::PathBuf;
@@ -28,6 +29,47 @@ enum Command {
     Project(ProjectCommand),
     Agent(AgentCommand),
     Board(BoardCommand),
+    Acp(AcpCommand),
+}
+
+#[derive(Debug, Args)]
+struct AcpCommand {
+    #[command(subcommand)]
+    command: AcpSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AcpSubcommand {
+    Agent(AcpAgentCommand),
+}
+
+#[derive(Debug, Args)]
+struct AcpAgentCommand {
+    #[command(subcommand)]
+    command: AcpAgentSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AcpAgentSubcommand {
+    Add(AcpAgentAddArgs),
+    List,
+    Remove(AcpAgentRemoveArgs),
+}
+
+#[derive(Debug, Args)]
+struct AcpAgentAddArgs {
+    name: String,
+    #[arg(long)]
+    command: PathBuf,
+    #[arg(long = "arg")]
+    args: Vec<String>,
+    #[arg(long = "env")]
+    env: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+struct AcpAgentRemoveArgs {
+    name: String,
 }
 
 #[derive(Debug, Args)]
@@ -165,6 +207,9 @@ struct DispatchArgs {
     /// Child-agent runtime to start.
     #[arg(long)]
     runtime: RuntimeArg,
+    /// Named ACP agent config to use when --runtime acp.
+    #[arg(long)]
+    agent: Option<String>,
     /// Record the planned tmux dispatch without launching a child agent.
     #[arg(long = "dry-run")]
     dry_run: bool,
@@ -279,6 +324,7 @@ enum RuntimeArg {
     Codex,
     #[clap(name = "opencode")]
     OpenCode,
+    Acp,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -307,6 +353,7 @@ impl From<RuntimeArg> for AgentRuntime {
             RuntimeArg::Claude => AgentRuntime::Claude,
             RuntimeArg::Codex => AgentRuntime::Codex,
             RuntimeArg::OpenCode => AgentRuntime::OpenCode,
+            RuntimeArg::Acp => AgentRuntime::Acp,
         }
     }
 }
@@ -367,6 +414,42 @@ pub fn run() -> Result<()> {
         Command::Project(project) => handle_project(project),
         Command::Agent(agent) => handle_agent(agent),
         Command::Board(board) => handle_board(board, &store),
+        Command::Acp(acp) => handle_acp(acp, &store),
+    }
+}
+
+fn handle_acp(acp: AcpCommand, store: &TaskStore) -> Result<()> {
+    match acp.command {
+        AcpSubcommand::Agent(agent) => match agent.command {
+            AcpAgentSubcommand::Add(args) => {
+                let mut env = std::collections::BTreeMap::new();
+                for pair in args.env {
+                    let (key, value) = acp_adapter::parse_env_pair(&pair)?;
+                    env.insert(key, value);
+                }
+                acp_adapter::add_acp_agent(
+                    store,
+                    &args.name,
+                    AcpAgentConfig {
+                        command: args.command,
+                        args: args.args,
+                        env,
+                    },
+                )?;
+                println!("Added ACP agent {}", args.name);
+                Ok(())
+            }
+            AcpAgentSubcommand::List => {
+                let agents = acp_adapter::load_acp_agents(store)?;
+                print!("{}", acp_adapter::render_acp_agent_list(&agents));
+                Ok(())
+            }
+            AcpAgentSubcommand::Remove(args) => {
+                acp_adapter::remove_acp_agent(store, &args.name)?;
+                println!("Removed ACP agent {}", args.name);
+                Ok(())
+            }
+        },
     }
 }
 
@@ -493,6 +576,185 @@ fn handle_task_brief(args: BriefArgs, store: &TaskStore) -> Result<()> {
     Ok(())
 }
 
+fn handle_acp_task_dispatch(
+    args: DispatchArgs,
+    store: &TaskStore,
+    mut task: TaskRecord,
+    now: OffsetDateTime,
+) -> Result<()> {
+    if args.send_brief {
+        bail!("--send-brief is only supported for tmux runtimes");
+    }
+    let Some(agent_name) = args.agent.as_deref() else {
+        bail!("ACP dispatch requires --agent <name>");
+    };
+
+    let agent = acp_adapter::get_acp_agent(store, agent_name)?;
+    let command = acp_adapter::format_agent_command(&agent);
+    if !args.dry_run && !args.confirm {
+        bail!("dispatch {} with runtime acp requires --confirm", args.id);
+    }
+
+    task.status = TaskStatus::Queued;
+    task.assignment.runtime = Some(AgentRuntime::Acp);
+    task.assignment.tmux_session = None;
+    task.assignment.acp_session_id = None;
+    task.recovery.attach_command = None;
+    task.recovery.resume_command = Some(format!(
+        "helm-agent task dispatch {} --runtime acp --agent {} --confirm",
+        args.id, agent_name
+    ));
+    task.progress.last_event = if args.dry_run {
+        "Dry-run ACP dispatch recorded".to_string()
+    } else {
+        "ACP dispatch prepared".to_string()
+    };
+    task.progress.next_action = "Start or inspect ACP agent handoff".to_string();
+    task.touch(now);
+
+    let event = TaskEvent::new(
+        args.id.clone(),
+        if args.dry_run {
+            "acp_dispatch_planned"
+        } else {
+            "acp_dispatch_prepared"
+        },
+        format!("{agent_name}: {command}"),
+        now,
+    );
+    let mut events = store.read_events(&args.id)?;
+    events.push(event.clone());
+    let prepared_brief_path = persist_task_brief(store, &mut task, &events)?;
+    store.append_event(&event)?;
+
+    if args.dry_run {
+        println!("Dry-run ACP dispatch {}", args.id);
+        println!("Agent: {agent_name}");
+        println!("Command: {command}");
+        println!(
+            "Resume: {}",
+            task.recovery
+                .resume_command
+                .as_deref()
+                .unwrap_or("No ACP resume command recorded")
+        );
+        println!("Brief: {}", prepared_brief_path.display());
+        return Ok(());
+    }
+
+    let prompt = fs::read_to_string(&prepared_brief_path)
+        .with_context(|| format!("read brief {}", prepared_brief_path.display()))?;
+    match acp_adapter::dispatch_prompt(&agent, &task.project.path, prompt) {
+        Ok(result) => {
+            let mut completed_task = store.load_task(&args.id)?;
+            let mut final_events = store.read_events(&args.id)?;
+            completed_task.assignment.runtime = Some(AgentRuntime::Acp);
+            completed_task.assignment.tmux_session = None;
+            completed_task.assignment.acp_session_id = Some(result.session_id.clone());
+            completed_task.recovery.attach_command = None;
+            completed_task.recovery.resume_command = task.recovery.resume_command.clone();
+            completed_task.recovery.brief_path = Some(store.brief_path(&completed_task.id));
+            if !matches!(
+                completed_task.status,
+                TaskStatus::Blocked | TaskStatus::NeedsChanges | TaskStatus::WaitingUser
+            ) {
+                completed_task.status = TaskStatus::ReadyForReview;
+                completed_task.progress.blocker = None;
+                completed_task.progress.last_event =
+                    format!("ACP dispatch completed: {}", result.stop_reason);
+                completed_task.progress.next_action = "Review ACP agent output".to_string();
+                completed_task.review.state = ReviewState::Required;
+                completed_task.review.reason =
+                    Some("ACP agent completed a one-shot handoff".to_string());
+            }
+            completed_task.touch(now);
+
+            let completed_event = TaskEvent::new(
+                args.id.clone(),
+                "acp_dispatch_completed",
+                format!("{agent_name}: session {}", result.session_id),
+                now,
+            );
+            final_events.push(completed_event.clone());
+            let final_markdown = brief::render_task_brief(&completed_task, &final_events);
+            if let Err(error) = store.save_task(&completed_task) {
+                let warning =
+                    format!("ACP completion state update failed after handoff: {error:#}");
+                if let Ok(mut retry_task) = store.load_task(&args.id) {
+                    retry_task.status = TaskStatus::NeedsChanges;
+                    retry_task.assignment.runtime = Some(AgentRuntime::Acp);
+                    retry_task.assignment.acp_session_id = Some(result.session_id.clone());
+                    retry_task.review.state = ReviewState::ChangesRequested;
+                    retry_task.review.reason = Some(warning.clone());
+                    retry_task.progress.last_event = warning.clone();
+                    retry_task.progress.next_action =
+                        "Fix local HelmAgent state persistence and retry dispatch".to_string();
+                    retry_task.touch(now);
+                    let _ = store.save_task(&retry_task);
+                }
+                let _ = store.append_event(&TaskEvent::new(
+                    args.id.clone(),
+                    "acp_dispatch_state_warning",
+                    warning,
+                    now,
+                ));
+                return Err(error).context("ACP completion state update failed after handoff");
+            }
+            if let Err(error) = store.write_brief(&completed_task.id, &final_markdown) {
+                let warning =
+                    format!("ACP completion state update failed after handoff: {error:#}");
+                if let Ok(mut retry_task) = store.load_task(&args.id) {
+                    retry_task.status = TaskStatus::NeedsChanges;
+                    retry_task.assignment.runtime = Some(AgentRuntime::Acp);
+                    retry_task.assignment.acp_session_id = Some(result.session_id.clone());
+                    retry_task.review.state = ReviewState::ChangesRequested;
+                    retry_task.review.reason = Some(warning.clone());
+                    retry_task.progress.last_event = warning.clone();
+                    retry_task.progress.next_action =
+                        "Fix local HelmAgent state persistence and retry dispatch".to_string();
+                    retry_task.touch(now);
+                    let _ = store.save_task(&retry_task);
+                }
+                let _ = store.append_event(&TaskEvent::new(
+                    args.id.clone(),
+                    "acp_dispatch_state_warning",
+                    warning,
+                    now,
+                ));
+                return Err(error).context("ACP completion state update failed after handoff");
+            }
+            if let Err(error) = store.append_event(&completed_event) {
+                eprintln!("Warning: ACP completed but event record failed: {error:#}");
+            }
+
+            println!("Completed ACP {}", args.id);
+            println!("Agent: {agent_name}");
+            println!("Command: {command}");
+            println!("Session: {}", result.session_id);
+            println!("Brief: {}", store.brief_path(&args.id).display());
+            Ok(())
+        }
+        Err(error) => {
+            let message = format!("ACP dispatch failed: {error:#}");
+            task.status = TaskStatus::NeedsChanges;
+            task.progress.blocker = None;
+            task.progress.last_event = message.clone();
+            task.progress.next_action = "Fix ACP agent config and retry dispatch".to_string();
+            task.review.state = ReviewState::ChangesRequested;
+            task.review.reason = Some(message.clone());
+            task.touch(now);
+            let failed_event = TaskEvent::new(args.id.clone(), "acp_dispatch_failed", message, now);
+            events.push(failed_event.clone());
+            task.recovery.brief_path = Some(store.brief_path(&task.id));
+            let final_markdown = brief::render_task_brief(&task, &events);
+            store.save_task(&task)?;
+            store.write_brief(&task.id, &final_markdown)?;
+            store.append_event(&failed_event)?;
+            Err(error)
+        }
+    }
+}
+
 fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
     match task.command {
         TaskSubcommand::List(args) => {
@@ -580,6 +842,13 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
             }
 
             let runtime = AgentRuntime::from(args.runtime);
+            if runtime == AgentRuntime::Acp {
+                return handle_acp_task_dispatch(args, store, task, now);
+            }
+            if args.agent.is_some() {
+                bail!("--agent can only be used with --runtime acp");
+            }
+
             let dispatch = DispatchPlan {
                 task_id: args.id.clone(),
                 runtime,

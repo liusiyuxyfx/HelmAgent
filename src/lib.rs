@@ -1,3 +1,4 @@
+pub mod acp_adapter;
 pub mod adapter;
 pub mod brief;
 pub mod cli;

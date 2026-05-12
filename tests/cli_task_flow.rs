@@ -84,6 +84,99 @@ fn fake_tmux_has_session_script(path: &Path, record_path: &Path, exit_code: i32)
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn fake_acp_agent_script(path: &Path) {
+    fs::write(
+        path,
+        r#"#!/usr/bin/env python3
+import json
+import os
+import re
+import subprocess
+import sys
+
+record_path = os.environ.get("HELM_ACP_RECORD")
+stderr_bytes = int(os.environ.get("HELM_ACP_STDERR_BYTES", "0") or "0")
+if stderr_bytes:
+    sys.stderr.write("x" * stderr_bytes)
+    sys.stderr.flush()
+
+def walk_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for child in value.values():
+            yield from walk_strings(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_strings(child)
+
+for line in sys.stdin:
+    request = json.loads(line)
+    method = request.get("method")
+    if method == "initialize":
+        result = {
+            "protocolVersion": request.get("params", {}).get("protocolVersion", 1),
+            "agentCapabilities": {},
+            "agentInfo": {"name": "fake-acp-agent", "version": "test"},
+        }
+    elif method == "session/new":
+        result = {"sessionId": "fake-acp-session-1"}
+    elif method == "session/prompt":
+        payload = json.dumps(request)
+        if record_path:
+            with open(record_path, "w", encoding="utf-8") as record:
+                json.dump(request, record)
+        mutate_bin = os.environ.get("HELM_ACP_MUTATE_BIN")
+        mutate_task = os.environ.get("HELM_ACP_MUTATE_TASK")
+        if mutate_bin and mutate_task:
+            mutate_message = os.environ.get("HELM_ACP_MUTATE_MESSAGE", "child agent progress")
+            subprocess.run(
+                [mutate_bin, "task", "event", mutate_task, "--type", "progress", "--message", mutate_message],
+                check=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        if os.environ.get("HELM_ACP_CHMOD_BRIEF") == "1":
+            text = "\n".join(walk_strings(request))
+            matches = re.findall(r"Brief: ([^\n\r]+)", text)
+            for candidate in matches:
+                try:
+                    path = candidate.strip()
+                    if path.endswith("/brief.md"):
+                        os.chmod(path, 0o444)
+                except OSError:
+                    pass
+        chmod_task = os.environ.get("HELM_ACP_CHMOD_TASK")
+        if chmod_task:
+            task_path = os.path.join(os.environ["HELM_AGENT_HOME"], "tasks", chmod_task.split("-")[1][0:4], f"{chmod_task}.yaml")
+            try:
+                os.chmod(task_path, 0o444)
+            except OSError:
+                pass
+        result = {"stopReason": "end_turn"}
+    else:
+        print(json.dumps({
+            "jsonrpc": "2.0",
+            "id": request.get("id"),
+            "error": {"code": -32601, "message": f"unknown method: {method}"},
+        }), flush=True)
+        continue
+
+    print(json.dumps({
+        "jsonrpc": "2.0",
+        "id": request.get("id"),
+        "result": result,
+    }), flush=True)
+    if method == "session/prompt" and os.environ.get("HELM_ACP_EXIT_AFTER_PROMPT") == "1":
+        sys.exit(0)
+"#,
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 #[test]
 fn project_init_all_writes_agent_instruction_files_idempotently() {
     let home = tempdir().unwrap();
@@ -227,6 +320,780 @@ fn agent_prompt_prints_runtime_bootstrap_and_template() {
         .stdout(contains("Runtime: codex"))
         .stdout(contains("helm-agent task board"))
         .stdout(contains("Use HelmAgent as source of truth"));
+}
+
+#[test]
+fn acp_agent_add_list_and_remove_round_trip() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "local-echo",
+            "--command",
+            "/bin/echo",
+            "--arg",
+            "hello",
+            "--env",
+            "HELM_TEST=1",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Added ACP agent local-echo"));
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "agent", "list"])
+        .assert()
+        .success()
+        .stdout(contains("local-echo"))
+        .stdout(contains("/bin/echo"))
+        .stdout(contains("hello"));
+
+    let config = fs::read_to_string(home.path().join("acp").join("agents.yaml")).unwrap();
+    assert!(config.contains("local-echo"), "{config}");
+    assert!(config.contains("HELM_TEST"), "{config}");
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "agent", "remove", "local-echo"])
+        .assert()
+        .success()
+        .stdout(contains("Removed ACP agent local-echo"));
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "agent", "list"])
+        .assert()
+        .success()
+        .stdout(contains("No ACP agents"));
+}
+
+#[test]
+fn acp_agent_add_rejects_invalid_env_pair() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "broken",
+            "--command",
+            "/bin/echo",
+            "--env",
+            "NO_EQUALS",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("env must be KEY=VALUE"));
+}
+
+#[test]
+fn acp_dispatch_requires_agent_name() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-REQ",
+            "--title",
+            "ACP requires agent",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-REQ",
+            "--runtime",
+            "acp",
+            "--dry-run",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("ACP dispatch requires --agent <name>"));
+}
+
+#[test]
+fn acp_dry_run_dispatch_records_configured_agent_without_tmux() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "local-fake",
+            "--command",
+            "/bin/echo",
+            "--arg",
+            "ready",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-DRY",
+            "--title",
+            "ACP dry run",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-DRY",
+            "--runtime",
+            "acp",
+            "--agent",
+            "local-fake",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Dry-run ACP dispatch PM-20260511-ACP-DRY"))
+        .stdout(contains("Agent: local-fake"))
+        .stdout(contains("Command: /bin/echo ready"))
+        .stdout(contains("Brief: "));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-DRY").unwrap();
+    assert_eq!(task.status, TaskStatus::Queued);
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Acp));
+    assert_eq!(task.assignment.tmux_session, None);
+    assert_eq!(task.assignment.acp_session_id, None);
+    assert_eq!(
+        task.recovery.resume_command.as_deref(),
+        Some("helm-agent task dispatch PM-20260511-ACP-DRY --runtime acp --agent local-fake --confirm")
+    );
+    let events = store.read_events("PM-20260511-ACP-DRY").unwrap();
+    let event = events.last().unwrap();
+    assert_eq!(event.event_type, "acp_dispatch_planned");
+    assert_eq!(event.message, "local-fake: /bin/echo ready");
+}
+
+#[test]
+fn acp_real_dispatch_sends_brief_to_fake_agent_and_records_session() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let fake_agent = home.path().join("fake-acp-agent.py");
+    let prompt_record = home.path().join("prompt.json");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "fake",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            &format!("HELM_ACP_RECORD={}", prompt_record.display()),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-REAL",
+            "--title",
+            "ACP real dispatch",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-REAL",
+            "--runtime",
+            "acp",
+            "--agent",
+            "fake",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Completed ACP PM-20260511-ACP-REAL"))
+        .stdout(contains("Session: fake-acp-session-1"))
+        .stdout(contains("Brief: "));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-REAL").unwrap();
+    assert_eq!(task.status, TaskStatus::ReadyForReview);
+    assert_eq!(task.review.state, ReviewState::Required);
+    assert_eq!(task.assignment.runtime, Some(AgentRuntime::Acp));
+    assert_eq!(
+        task.assignment.acp_session_id.as_deref(),
+        Some("fake-acp-session-1")
+    );
+    assert!(task.assignment.tmux_session.is_none());
+
+    let prompt = fs::read_to_string(prompt_record).unwrap();
+    assert!(prompt.contains("session/prompt"), "{prompt}");
+    assert!(
+        prompt.contains("Child Agent Task Brief: PM-20260511-ACP-REAL"),
+        "{prompt}"
+    );
+
+    let events = store.read_events("PM-20260511-ACP-REAL").unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "acp_dispatch_prepared"));
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "acp_dispatch_completed"));
+}
+
+#[test]
+fn acp_real_dispatch_failure_marks_needs_changes_and_writes_final_brief() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let failing_agent = home.path().join("failing-acp-agent.sh");
+    fs::write(
+        &failing_agent,
+        "#!/bin/sh\nprintf '%s\\n' 'fake ACP failure' >&2\nexit 9\n",
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&failing_agent).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&failing_agent, permissions).unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "failing",
+            "--command",
+            failing_agent.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-FAIL",
+            "--title",
+            "ACP failing dispatch",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-FAIL",
+            "--runtime",
+            "acp",
+            "--agent",
+            "failing",
+            "--confirm",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("ACP agent exited before handoff"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-FAIL").unwrap();
+    assert_eq!(task.status, TaskStatus::NeedsChanges);
+    assert_eq!(task.review.state, ReviewState::ChangesRequested);
+    assert!(task.progress.last_event.contains("ACP dispatch failed"));
+    let events = store.read_events("PM-20260511-ACP-FAIL").unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.event_type == "acp_dispatch_failed"));
+    let brief = fs::read_to_string(task.recovery.brief_path.as_ref().unwrap()).unwrap();
+    assert!(brief.contains("Status: needs_changes"), "{brief}");
+    assert!(brief.contains("acp_dispatch_failed"), "{brief}");
+}
+
+#[test]
+fn acp_dispatch_without_confirm_does_not_mutate_task() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "local-fake",
+            "--command",
+            "/bin/echo",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-NOCONFIRM",
+            "--title",
+            "ACP no confirm",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-NOCONFIRM",
+            "--runtime",
+            "acp",
+            "--agent",
+            "local-fake",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("requires --confirm"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-NOCONFIRM").unwrap();
+    assert_eq!(task.status, TaskStatus::Inbox);
+    assert_eq!(task.assignment.runtime, None);
+    assert_eq!(
+        store
+            .read_events("PM-20260511-ACP-NOCONFIRM")
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn acp_failed_dispatch_can_be_retried_after_agent_config_is_fixed() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let failing_agent = home.path().join("failing-acp-agent.sh");
+    let fake_agent = home.path().join("fake-acp-agent.py");
+    let prompt_record = home.path().join("retry-prompt.json");
+    fs::write(&failing_agent, "#!/bin/sh\nexit 9\n").unwrap();
+    let mut permissions = fs::metadata(&failing_agent).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&failing_agent, permissions).unwrap();
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "retry",
+            "--command",
+            failing_agent.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-RETRY",
+            "--title",
+            "ACP retry",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-RETRY",
+            "--runtime",
+            "acp",
+            "--agent",
+            "retry",
+            "--confirm",
+        ])
+        .assert()
+        .failure();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "retry",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            &format!("HELM_ACP_RECORD={}", prompt_record.display()),
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-RETRY",
+            "--runtime",
+            "acp",
+            "--agent",
+            "retry",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Completed ACP PM-20260511-ACP-RETRY"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-RETRY").unwrap();
+    assert_eq!(task.status, TaskStatus::ReadyForReview);
+    assert_eq!(
+        task.assignment.acp_session_id.as_deref(),
+        Some("fake-acp-session-1")
+    );
+}
+
+#[test]
+fn acp_real_dispatch_does_not_block_on_noisy_agent_stderr() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let fake_agent = home.path().join("noisy-acp-agent.py");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "noisy",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            "HELM_ACP_STDERR_BYTES=1048576",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-NOISY",
+            "--title",
+            "ACP noisy stderr",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let mut cmd = helm_agent_with_home(home.path());
+    cmd.timeout(std::time::Duration::from_secs(5))
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-NOISY",
+            "--runtime",
+            "acp",
+            "--agent",
+            "noisy",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Completed ACP PM-20260511-ACP-NOISY"));
+}
+
+#[test]
+fn acp_real_dispatch_preserves_child_recorded_progress_in_final_brief() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let fake_agent = home.path().join("mutating-acp-agent.py");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "mutating",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            concat!("HELM_ACP_MUTATE_BIN=", env!("CARGO_BIN_EXE_helm-agent")),
+            "--env",
+            "HELM_ACP_MUTATE_TASK=PM-20260511-ACP-MUTATE",
+            "--env",
+            "HELM_ACP_MUTATE_MESSAGE=child wrote progress",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-MUTATE",
+            "--title",
+            "ACP child records progress",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-MUTATE",
+            "--runtime",
+            "acp",
+            "--agent",
+            "mutating",
+            "--confirm",
+        ])
+        .assert()
+        .success();
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-MUTATE").unwrap();
+    assert_eq!(task.status, TaskStatus::ReadyForReview);
+    let events = store.read_events("PM-20260511-ACP-MUTATE").unwrap();
+    assert!(events
+        .iter()
+        .any(|event| event.message == "child wrote progress"));
+    let brief = fs::read_to_string(task.recovery.brief_path.as_ref().unwrap()).unwrap();
+    assert!(brief.contains("child wrote progress"), "{brief}");
+}
+
+#[test]
+fn acp_real_dispatch_accepts_agent_that_exits_after_prompt_response() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let fake_agent = home.path().join("exiting-acp-agent.py");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "exiting",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            "HELM_ACP_EXIT_AFTER_PROMPT=1",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-EXIT",
+            "--title",
+            "ACP exits after prompt",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-EXIT",
+            "--runtime",
+            "acp",
+            "--agent",
+            "exiting",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Completed ACP PM-20260511-ACP-EXIT"));
+}
+
+#[test]
+fn acp_real_dispatch_times_out_unresponsive_agent_and_allows_retry() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let sleeping_agent = home.path().join("sleeping-acp-agent.sh");
+    let fake_agent = home.path().join("fake-acp-agent.py");
+    fs::write(&sleeping_agent, "#!/bin/sh\nsleep 30\n").unwrap();
+    let mut permissions = fs::metadata(&sleeping_agent).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&sleeping_agent, permissions).unwrap();
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "timeout",
+            "--command",
+            sleeping_agent.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-TIMEOUT",
+            "--title",
+            "ACP timeout",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let mut timeout_cmd = helm_agent_with_home(home.path());
+    timeout_cmd
+        .env("HELM_AGENT_ACP_TIMEOUT_MS", "200")
+        .timeout(std::time::Duration::from_secs(5))
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-TIMEOUT",
+            "--runtime",
+            "acp",
+            "--agent",
+            "timeout",
+            "--confirm",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("ACP handoff timed out"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-TIMEOUT").unwrap();
+    assert_eq!(task.status, TaskStatus::NeedsChanges);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "timeout",
+            "--command",
+            fake_agent.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-TIMEOUT",
+            "--runtime",
+            "acp",
+            "--agent",
+            "timeout",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Completed ACP PM-20260511-ACP-TIMEOUT"));
+}
+
+#[test]
+fn acp_success_local_brief_persistence_failure_keeps_task_retryable() {
+    let home = tempdir().unwrap();
+    let project = tempdir().unwrap();
+    let fake_agent = home.path().join("chmod-acp-agent.py");
+    fake_acp_agent_script(&fake_agent);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "chmod",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--env",
+            "HELM_ACP_CHMOD_TASK=PM-20260511-ACP-WRITEFAIL",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260511-ACP-WRITEFAIL",
+            "--title",
+            "ACP write failure",
+            "--project",
+            project.path().to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let mut dispatch = helm_agent_with_home(home.path());
+    dispatch
+        .env("HELM_AGENT_ACP_TIMEOUT_MS", "3000")
+        .timeout(std::time::Duration::from_secs(8))
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260511-ACP-WRITEFAIL",
+            "--runtime",
+            "acp",
+            "--agent",
+            "chmod",
+            "--confirm",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("ACP completion state update failed"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260511-ACP-WRITEFAIL").unwrap();
+    assert_ne!(task.status, TaskStatus::ReadyForReview);
+    assert!(matches!(
+        task.status,
+        TaskStatus::Queued | TaskStatus::NeedsChanges
+    ));
+    let brief = fs::read_to_string(task.recovery.brief_path.as_ref().unwrap()).unwrap();
+    assert!(!brief.contains("Status: ready_for_review"), "{brief}");
+    assert!(!brief.contains("acp_dispatch_completed"), "{brief}");
 }
 
 #[test]

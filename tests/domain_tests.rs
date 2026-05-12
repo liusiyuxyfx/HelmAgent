@@ -75,6 +75,7 @@ fn runtime_display_names_match_cli_values() {
     assert_eq!(AgentRuntime::Claude.as_str(), "claude");
     assert_eq!(AgentRuntime::Codex.as_str(), "codex");
     assert_eq!(AgentRuntime::OpenCode.as_str(), "opencode");
+    assert_eq!(AgentRuntime::Acp.as_str(), "acp");
 }
 
 #[test]
@@ -83,6 +84,7 @@ fn runtime_serialization_matches_cli_values() {
         (AgentRuntime::Claude, "claude"),
         (AgentRuntime::Codex, "codex"),
         (AgentRuntime::OpenCode, "opencode"),
+        (AgentRuntime::Acp, "acp"),
     ];
 
     for (runtime, value) in runtimes {
