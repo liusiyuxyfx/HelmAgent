@@ -1,6 +1,42 @@
 # HelmAgent
 
-HelmAgent is a local coordination CLI for coding agents with task records, tmux sessions, recovery commands, and review checkpoints.
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+HelmAgent is a local coordination layer for humans working with multiple coding agents.
+
+It gives a main agent a durable task board, child-agent handoff briefs, dispatch records,
+review checkpoints, and recovery commands, so fast AI work stays inspectable instead of
+turning into scattered terminal sessions and chat history.
+
+HelmAgent is designed to run locally. It stores task state under `HELM_AGENT_HOME`, can
+launch child agents through `tmux`, and can hand off work to ACP-compatible agents over
+stdio.
+
+## Features
+
+- Durable local task records for inbox, triage, queued, running, blocked, review, and done states.
+- Main-agent operating guidance for Codex, Claude Code, OpenCode, or all supported runtimes.
+- Project-local `AGENTS.md` and `CLAUDE.md` includes, without modifying global agent settings.
+- Child-agent task briefs with scope, recovery commands, recent events, and review instructions.
+- `tmux` dispatch previews and real child-agent sessions for Claude, Codex, and OpenCode.
+- ACP agent registry and one-shot ACP brief handoff for compatible stdio agents.
+- Human review workflow with ready-for-review, changes-requested, and accepted states.
+- Local web board for browsing tasks and recording progress from a browser.
+- Install, update, repair, doctor, and uninstall commands for normal CLI lifecycle management.
+
+## Status
+
+HelmAgent is early-stage but usable as a local CLI. The current focus is reliable local
+coordination, explicit review gates, and safe recovery when delegated work needs human
+attention.
+
+## Requirements
+
+- macOS or another Unix-like shell environment.
+- Rust toolchain with `cargo`, `rustc`, and `git`.
+- `$HOME/.cargo/bin` on `PATH`.
+- `tmux` for tmux-backed child-agent dispatch.
+- ACP-compatible agent executable only if you want to use `--runtime acp`.
 
 ## Install
 
@@ -11,140 +47,204 @@ INSTALLER=/tmp/helm-agent-install.sh
 curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" install
 ```
 
-Update, repair, diagnose, and uninstall:
+Install from a local checkout:
+
+```bash
+git clone https://github.com/liusiyuxyfx/HelmAgent.git
+cd HelmAgent
+make install
+```
+
+The installer places the binary through `cargo install` and writes local support files
+under `$HOME/.helm-agent` by default.
+
+## Update, Repair, And Uninstall
+
+From GitHub:
 
 ```bash
 INSTALLER=/tmp/helm-agent-install.sh
+
 curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" update
 curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" repair
 curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" doctor
 curl -fsSL https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/install.sh -o "$INSTALLER" && sh "$INSTALLER" uninstall
 ```
 
-Local checkout:
+From a local checkout:
 
 ```bash
-make install
 make update
 make repair
 make doctor
 make uninstall
 ```
 
-See [Install Guide](docs/install.md) for `--dry-run`, `--purge`, legacy `init-project`, and environment options.
+Plain uninstall keeps `$HOME/.helm-agent` so task records are not deleted by accident.
+Use `make uninstall-purge` or `sh ./install.sh uninstall --purge` only when you
+intentionally want to remove HelmAgent data.
 
-Initialize one project after install so the main agent can discover HelmAgent instructions:
+See [docs/install.md](docs/install.md) for dry-run mode, purge safeguards, legacy
+`init-project`, and environment overrides.
+
+## Quick Start
+
+Initialize one project so your main agent can discover HelmAgent instructions:
 
 ```bash
 helm-agent project init --path /path/to/project --agent all
 ```
 
-This adds project-local `AGENTS.md` and `CLAUDE.md` includes for the installed coordinator template under `$HOME/.helm-agent/main-agent-template.md`.
+This adds project-local includes to `AGENTS.md` and `CLAUDE.md` pointing at the installed
+template under `$HOME/.helm-agent/main-agent-template.md`.
 
-Print a main-agent bootstrap prompt:
+Start or instruct a main agent with the generated operating prompt:
 
 ```bash
 helm-agent agent prompt --runtime codex
 helm-agent agent prompt --runtime claude
+helm-agent agent prompt --runtime opencode
 ```
-
-Open a local interactive board:
-
-```bash
-helm-agent board serve --host 127.0.0.1 --port 8765
-```
-
-## Current Focus
-
-- Durable task records under `HELM_AGENT_HOME`.
-- Main-agent workflows that keep HelmAgent as the source of truth for task state.
-- Child-agent dispatch previews and tmux-backed sessions.
-- Policy gates that require `--confirm` before paid Codex or elevated-risk real dispatches.
-- Attach, resume, and review checkpoints for recovering delegated work.
-- Review-queue commands for triage, status updates, and human handoff.
-- ACP agent registry and one-shot ACP brief handoff for compatible child agents.
-
-## Development
-
-Run the test suite:
-
-```bash
-cargo test
-```
-
-Run the CLI during development:
-
-```bash
-cargo run --bin helm-agent -- task create --id PM-20260509-001 --title "Example task" --project .
-cargo run --bin helm-agent -- task status PM-20260509-001
-```
-
-`HELM_AGENT_HOME` overrides where task records are stored. `HELM_AGENT_TMUX_BIN` overrides the tmux binary used for real dispatches.
-
-## Common Commands
 
 Create and triage a task:
 
 ```bash
-helm-agent task create --id PM-20260511-001 --title "Add retry tests" --project .
-helm-agent task triage PM-20260511-001 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
+helm-agent task create --id PM-20260512-001 --title "Add retry tests" --project .
+helm-agent task triage PM-20260512-001 --risk medium --priority high --runtime claude --review-reason "Touches retry policy"
 ```
 
-List active tasks or the human review queue:
+Open the task board:
+
+```bash
+helm-agent task board
+helm-agent board serve --host 127.0.0.1 --port 8765
+```
+
+Prepare or start a child-agent handoff:
+
+```bash
+helm-agent task dispatch PM-20260512-001 --runtime claude --dry-run
+helm-agent task dispatch PM-20260512-001 --runtime claude --send-brief
+```
+
+Mark the task for human review:
+
+```bash
+helm-agent task mark PM-20260512-001 --ready-for-review --message "Implementation and tests are ready"
+helm-agent task review PM-20260512-001 --request-changes "Add a regression test before merging"
+helm-agent task review PM-20260512-001 --accept
+```
+
+## ACP Agents
+
+HelmAgent can register ACP-compatible agents and send a generated task brief as a
+one-shot prompt over stdio.
+
+```bash
+helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
+helm-agent acp agent list
+helm-agent task dispatch PM-20260512-001 --runtime acp --agent local-acp --dry-run
+helm-agent task dispatch PM-20260512-001 --runtime acp --agent local-acp --confirm
+```
+
+ACP dispatch records the ACP session id and moves the task to `ready_for_review` after
+the handoff completes. Failed or timed-out ACP dispatches move the task to
+`needs_changes` so the agent config can be fixed and retried.
+
+## Common Commands
+
+List tasks:
 
 ```bash
 helm-agent task list
 helm-agent task list --review
 helm-agent task list --status blocked --status ready_for_review
-helm-agent task board
-helm-agent board html
 ```
 
-Sync recorded tmux sessions before reporting delegated session health:
+Inspect or resume one task:
 
 ```bash
-helm-agent task sync PM-20260511-001
+helm-agent task status PM-20260512-001
+helm-agent task resume PM-20260512-001
+```
+
+Generate a child-agent brief:
+
+```bash
+helm-agent task brief PM-20260512-001
+helm-agent task brief PM-20260512-001 --write
+```
+
+Record progress manually:
+
+```bash
+helm-agent task event PM-20260512-001 --type progress --message "Tests are running"
+helm-agent task mark PM-20260512-001 --blocked --message "Waiting for API contract confirmation"
+helm-agent task mark PM-20260512-001 --ready-for-review --message "Ready for review"
+```
+
+Sync tmux-backed session health before reporting delegated work:
+
+```bash
+helm-agent task sync PM-20260512-001
 helm-agent task sync --all
 ```
 
-Generate a child-agent brief for handoff or review:
+## Data And Isolation
 
-```bash
-helm-agent task brief PM-20260511-001
-helm-agent task brief PM-20260511-001 --write
+By default HelmAgent writes only:
+
+```text
+$HOME/.helm-agent/
 ```
 
-Dry-run and real dispatch write the same brief automatically under the task session directory and show its path in `status`, `resume`, and `board`.
+and project files you explicitly initialize:
 
-`--send-brief` is opt-in for real tmux dispatch. It sends the brief path into the child-agent tmux session after launch:
-
-```bash
-helm-agent task dispatch PM-20260511-001 --runtime claude --send-brief
+```text
+AGENTS.md
+CLAUDE.md
 ```
 
-If tmux launch succeeds but brief injection fails, HelmAgent still prints attach/resume/brief recovery output and reports `Brief sent: no`.
+It does not install global Claude Code hooks, Codex config, skills, agents, or ACP
+servers. Project initialization uses include lines so existing workflows can stay
+separate.
 
-Register and dispatch to an ACP-compatible agent over stdio:
-
-```bash
-helm-agent acp agent add local-acp --command /path/to/acp-agent --arg=--stdio
-helm-agent acp agent list
-helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-run
-helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
-```
-
-ACP real dispatch sends the generated child-agent brief as a prompt, records the ACP session id, and marks the task ready for human review after the one-shot handoff completes. `--confirm` is required because cost and write behavior depend on the configured ACP agent.
-
-Mark real task state:
+Useful environment variables:
 
 ```bash
-helm-agent task mark PM-20260511-001 --blocked --message "Waiting for API contract confirmation"
-helm-agent task mark PM-20260511-001 --ready-for-review --message "Implementation and tests are ready"
-helm-agent task review PM-20260511-001 --request-changes "Add a regression test before merging"
+HELM_AGENT_HOME=$HOME/.helm-agent
+HELM_AGENT_TMUX_BIN=tmux
+HELM_AGENT_ACP_TIMEOUT_MS=300000
 ```
 
-## Agent Integrations
+## Development
 
-See [Main-Agent Integration](docs/agent-integrations/main-agent.md) for rules and command examples for Claude Code, Codex, and other main agents.
+Run tests:
 
-Use `helm-agent project init --path . --agent all` to wire a project for Codex and Claude Code. Use `helm-agent agent prompt --runtime <codex|claude|opencode|all>` when starting a main agent manually.
+```bash
+cargo test
+```
+
+Run the CLI from the checkout:
+
+```bash
+cargo run --bin helm-agent -- task create --id PM-20260512-DEV --title "Example task" --project .
+cargo run --bin helm-agent -- task status PM-20260512-DEV
+```
+
+Before submitting changes:
+
+```bash
+cargo fmt -- --check
+cargo test
+git diff --check
+```
+
+## Documentation
+
+- [Install Guide](docs/install.md)
+- [Main-Agent Integration](docs/agent-integrations/main-agent.md)
+
+## License
+
+MIT. See [LICENSE](LICENSE).
