@@ -196,10 +196,17 @@ CLAUDE.md
 常用环境变量：
 
 ```bash
-HELM_AGENT_HOME=$HOME/.helm-agent
-HELM_AGENT_TMUX_BIN=tmux
-HELM_AGENT_ACP_TIMEOUT_MS=300000
+export HELM_AGENT_HOME="$HOME/.helm-agent"
+export HELM_AGENT_TMUX_BIN=tmux
+export HELM_AGENT_ACP_TIMEOUT_MS=300000
+export HELM_AGENT_CLAUDE_COMMAND="mc --code"
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+export HELM_AGENT_CODEX_COMMAND=codex
+export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
+export HELM_AGENT_OPENCODE_COMMAND=opencode
 ```
+
+运行时命令覆盖是可选的。当 HelmAgent 应启动的真实命令和 runtime 名称不一致时使用它。例如你的机器上 Claude Code 入口是 `mc --code`，就可以在分发前设置 `HELM_AGENT_CLAUDE_COMMAND` 和 `HELM_AGENT_CLAUDE_RESUME_COMMAND`。这些值会作为可信 shell 命令字符串传给 tmux；如果命令路径需要复杂引号，建议用 wrapper script。仅当你的 OpenCode 版本支持原生 resume 时，再设置 `HELM_AGENT_OPENCODE_RESUME_COMMAND`。
 
 ## 开发
 

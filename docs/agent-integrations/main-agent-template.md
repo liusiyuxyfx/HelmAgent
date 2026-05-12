@@ -22,6 +22,14 @@ helm-agent task triage PM-YYYYMMDD-001 --risk low --priority normal --runtime cl
 
 - Prefer free runtimes first: `claude` or `opencode`.
 - Ask before using Codex unless the user has already approved it for this task or workspace.
+- If a runtime uses a local wrapper command, export the override before dispatch:
+
+```bash
+export HELM_AGENT_CLAUDE_COMMAND="mc --code"
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+```
+
+- Runtime command overrides are tmux shell command strings. Use only trusted values; use a wrapper script when the executable path needs complex quoting.
 - Always preview dispatch before starting a child agent:
 
 ```bash

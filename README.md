@@ -212,10 +212,23 @@ separate.
 Useful environment variables:
 
 ```bash
-HELM_AGENT_HOME=$HOME/.helm-agent
-HELM_AGENT_TMUX_BIN=tmux
-HELM_AGENT_ACP_TIMEOUT_MS=300000
+export HELM_AGENT_HOME="$HOME/.helm-agent"
+export HELM_AGENT_TMUX_BIN=tmux
+export HELM_AGENT_ACP_TIMEOUT_MS=300000
+export HELM_AGENT_CLAUDE_COMMAND="mc --code"
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+export HELM_AGENT_CODEX_COMMAND=codex
+export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
+export HELM_AGENT_OPENCODE_COMMAND=opencode
 ```
+
+Runtime command overrides are optional. They are useful when the executable HelmAgent
+should launch differs from the runtime name. For example, if Claude Code is exposed as
+`mc --code` on your machine, set `HELM_AGENT_CLAUDE_COMMAND` and
+`HELM_AGENT_CLAUDE_RESUME_COMMAND` before dispatch. These values are passed to tmux as
+trusted shell command strings; use a wrapper script if the command path needs complex
+quoting. Set `HELM_AGENT_OPENCODE_RESUME_COMMAND` only when your OpenCode version
+supports native resume.
 
 ## Development
 

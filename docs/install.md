@@ -166,7 +166,7 @@ export HELM_AGENT_HOME="$HOME/.helm-agent"
 export PATH="$HOME/.cargo/bin:$PATH"
 ```
 
-Supported overrides:
+Installer overrides:
 
 ```bash
 HELM_AGENT_REPO=https://github.com/liusiyuxyfx/HelmAgent.git
@@ -178,6 +178,23 @@ HELM_AGENT_TEMPLATE_URL=https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/
 ```
 
 `HELM_AGENT_CARGO_ROOT` controls where `cargo install` writes the binary. `HELM_AGENT_BIN_DIR` controls the PATH line written to the env file and the PATH check in doctor; by default it is `$HELM_AGENT_CARGO_ROOT/bin`.
+
+Dispatch-time runtime overrides:
+
+```bash
+export HELM_AGENT_CLAUDE_COMMAND="mc --code"
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+export HELM_AGENT_CODEX_COMMAND=codex
+export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
+export HELM_AGENT_OPENCODE_COMMAND=opencode
+```
+
+The runtime command variables are optional dispatch overrides. Set them in the shell
+that runs `helm-agent task dispatch` when the local command differs from the runtime
+name, such as using `mc --code` for Claude Code. HelmAgent passes these values to
+tmux as trusted shell command strings; use a wrapper script if the command path needs
+complex quoting. Set `HELM_AGENT_OPENCODE_RESUME_COMMAND` only when your OpenCode
+version supports native resume.
 
 Load the environment manually when needed:
 

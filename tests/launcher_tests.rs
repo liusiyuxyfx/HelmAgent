@@ -46,6 +46,10 @@ fn has_session_tmux_script(path: &Path, record_path: &Path, exit_code: i32) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn default_launcher() -> Launcher {
+    Launcher::with_tmux_bin(PathBuf::from("tmux"))
+}
+
 #[test]
 fn adapter_metadata_matches_runtime_capabilities() {
     let claude = RuntimeAdapter::for_runtime(AgentRuntime::Claude);
@@ -83,7 +87,7 @@ fn dry_run_preview_builds_tmux_and_recovery_commands() {
         runtime: AgentRuntime::Claude,
         cwd: PathBuf::from("/repo/project"),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-007-claude");
     assert_eq!(
@@ -107,7 +111,7 @@ fn codex_dry_run_preview_uses_placeholder_resume_template() {
         runtime: AgentRuntime::Codex,
         cwd: PathBuf::from("/repo/project"),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-008-codex");
     assert_eq!(
@@ -131,7 +135,7 @@ fn opencode_dry_run_preview_has_no_native_resume_command() {
         runtime: AgentRuntime::OpenCode,
         cwd: PathBuf::from("/repo/project"),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(launch.tmux_session, "helm-agent-PM-20260509-009-opencode");
     assert_eq!(
@@ -152,11 +156,35 @@ fn dry_run_preview_shell_quotes_cwd_with_spaces() {
         runtime: AgentRuntime::Claude,
         cwd: PathBuf::from("/repo/my project"),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(
         launch.start_command,
         "tmux new-session -d -s helm-agent-PM-20260509-010-claude -c '/repo/my project' claude"
+    );
+}
+
+#[test]
+fn dry_run_preview_uses_runtime_command_override() {
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260512-OVERRIDE".to_string(),
+        runtime: AgentRuntime::Claude,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launcher = Launcher::with_runtime_command_override(
+        PathBuf::from("tmux"),
+        AgentRuntime::Claude,
+        "mc --code".to_string(),
+    );
+    let launch = launcher.dry_run(&dispatch);
+
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -s helm-agent-PM-20260512-OVERRIDE-claude -c /repo/project 'mc --code'"
+    );
+    assert_eq!(
+        launch.resume_command.as_deref(),
+        Some("claude --resume <session-id>")
     );
 }
 
@@ -167,7 +195,7 @@ fn dry_run_preview_shell_quotes_single_quote_in_cwd() {
         runtime: AgentRuntime::Codex,
         cwd: PathBuf::from("/repo/owner's project"),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(
         launch.start_command,
@@ -182,7 +210,7 @@ fn dry_run_preview_shell_quotes_empty_cwd() {
         runtime: AgentRuntime::Codex,
         cwd: PathBuf::from(""),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(
         launch.start_command,
@@ -197,7 +225,7 @@ fn dry_run_preview_shell_quotes_unsafe_session_tokens() {
         runtime: AgentRuntime::Codex,
         cwd: PathBuf::from("/repo/project"),
     };
-    let launch = Launcher::new().dry_run(&dispatch);
+    let launch = default_launcher().dry_run(&dispatch);
 
     assert_eq!(launch.tmux_session, "helm-agent-PM 20260509'013-codex");
     assert_eq!(
@@ -232,6 +260,32 @@ fn launch_executes_tmux_with_expected_arguments() {
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
         "new-session\n-d\n-s\nhelm-agent-PM-20260509-012-codex\n-c\n/repo/my project\ncodex\n"
+    );
+}
+
+#[test]
+fn launch_passes_runtime_command_override_to_tmux() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260512-OVERRIDE-LAUNCH".to_string(),
+        runtime: AgentRuntime::Claude,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launcher = Launcher::with_runtime_command_override(
+        tmux_bin,
+        AgentRuntime::Claude,
+        "mc --code".to_string(),
+    );
+
+    launcher.launch(&dispatch).unwrap();
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "new-session\n-d\n-s\nhelm-agent-PM-20260512-OVERRIDE-LAUNCH-claude\n-c\n/repo/project\nmc --code\n"
     );
 }
 

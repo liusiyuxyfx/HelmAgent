@@ -26,6 +26,17 @@ helm-agent agent prompt --runtime claude
 helm-agent agent prompt --runtime opencode
 ```
 
+If a runtime uses a local wrapper command, configure it before dispatch. For example,
+when Claude Code is launched as `mc --code`:
+
+```bash
+export HELM_AGENT_CLAUDE_COMMAND="mc --code"
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+```
+
+Runtime command overrides are tmux shell command strings. Use only trusted values, and
+prefer a wrapper script when the executable path needs complex quoting.
+
 ## Main-Agent Rules
 
 - Create a HelmAgent task before delegating work.
@@ -146,6 +157,12 @@ helm-agent task dispatch --runtime codex --confirm PM-20260509-101
 ```
 
 If a workspace uses a non-default tmux binary, set `HELM_AGENT_TMUX_BIN` before real dispatch. HelmAgent-created tmux sessions use the `helm-agent-` session prefix.
+
+If a runtime uses a non-default executable, set the matching command override before
+real dispatch: `HELM_AGENT_CLAUDE_COMMAND`, `HELM_AGENT_CODEX_COMMAND`, or
+`HELM_AGENT_OPENCODE_COMMAND`. Resume output can be adjusted with the matching
+`*_RESUME_COMMAND` variable. Set `HELM_AGENT_OPENCODE_RESUME_COMMAND` only when the
+local OpenCode version supports native resume.
 
 Serve the read-only browser board when useful:
 

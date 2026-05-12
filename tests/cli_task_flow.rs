@@ -9,9 +9,21 @@ use std::path::Path;
 use tempfile::tempdir;
 use time::{Duration, OffsetDateTime};
 
+const RUNTIME_COMMAND_ENV_VARS: &[&str] = &[
+    "HELM_AGENT_CLAUDE_COMMAND",
+    "HELM_AGENT_CLAUDE_RESUME_COMMAND",
+    "HELM_AGENT_CODEX_COMMAND",
+    "HELM_AGENT_CODEX_RESUME_COMMAND",
+    "HELM_AGENT_OPENCODE_COMMAND",
+    "HELM_AGENT_OPENCODE_RESUME_COMMAND",
+];
+
 fn helm_agent_with_home(home: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("helm-agent").unwrap();
     cmd.env("HELM_AGENT_HOME", home);
+    for var in RUNTIME_COMMAND_ENV_VARS {
+        cmd.env_remove(var);
+    }
     cmd
 }
 
@@ -1640,6 +1652,65 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("[running]"));
+}
+
+#[test]
+fn dispatch_respects_runtime_command_env_override() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260512-CMD",
+            "--title",
+            "Dispatch with command override",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .env("HELM_AGENT_CLAUDE_COMMAND", "mc --code")
+        .env(
+            "HELM_AGENT_CLAUDE_RESUME_COMMAND",
+            "mc --code --resume <session-id>",
+        )
+        .args(["task", "dispatch", "PM-20260512-CMD", "--runtime", "claude"])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260512-CMD"))
+        .stdout(contains(
+            "Start: tmux new-session -d -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'",
+        ))
+        .stdout(contains("Resume: mc --code --resume <session-id>"));
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "new-session\n-d\n-s\nhelm-agent-PM-20260512-CMD-claude\n-c\n/repo/project\nmc --code\n"
+    );
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260512-CMD").unwrap();
+    assert_eq!(task.progress.last_event, "Dispatch started");
+    assert_eq!(
+        task.recovery.resume_command.as_deref(),
+        Some("mc --code --resume <session-id>")
+    );
+    let events = store.read_events("PM-20260512-CMD").unwrap();
+    assert!(events.iter().any(|event| {
+        event.event_type == "dispatch_started"
+            && event
+                .message
+                .contains("tmux new-session -d -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'")
+    }));
 }
 
 #[test]

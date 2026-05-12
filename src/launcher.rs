@@ -29,6 +29,17 @@ pub enum TmuxSessionState {
 #[derive(Debug, Clone)]
 pub struct Launcher {
     tmux_bin: PathBuf,
+    runtime_commands: RuntimeCommandOverrides,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct RuntimeCommandOverrides {
+    claude: Option<String>,
+    codex: Option<String>,
+    opencode: Option<String>,
+    claude_resume: Option<String>,
+    codex_resume: Option<String>,
+    opencode_resume: Option<String>,
 }
 
 impl Launcher {
@@ -37,30 +48,48 @@ impl Launcher {
             tmux_bin: env::var_os("HELM_AGENT_TMUX_BIN")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("tmux")),
+            runtime_commands: RuntimeCommandOverrides::from_env(),
         }
     }
 
     pub fn with_tmux_bin(tmux_bin: PathBuf) -> Self {
-        Self { tmux_bin }
+        Self {
+            tmux_bin,
+            runtime_commands: RuntimeCommandOverrides::default(),
+        }
+    }
+
+    pub fn with_runtime_command_override(
+        tmux_bin: PathBuf,
+        runtime: AgentRuntime,
+        command: String,
+    ) -> Self {
+        let mut runtime_commands = RuntimeCommandOverrides::default();
+        runtime_commands.set(runtime, command);
+        Self {
+            tmux_bin,
+            runtime_commands,
+        }
     }
 
     pub fn dry_run(&self, dispatch: &DispatchPlan) -> LaunchPreview {
         let adapter = RuntimeAdapter::for_runtime(dispatch.runtime);
+        let runtime_command = self.runtime_command(&adapter);
         let tmux_session = format!(
             "helm-agent-{task_id}-{runtime}",
             task_id = dispatch.task_id,
             runtime = dispatch.runtime.as_str()
         );
-        let resume_command = adapter
-            .native_resume_available
-            .then(|| adapter.native_resume_template.to_string());
+        let resume_command = self
+            .runtime_resume_command(&adapter)
+            .map(ToString::to_string);
 
         LaunchPreview {
             start_command: format!(
                 "tmux new-session -d -s {tmux_session} -c {cwd} {command}",
                 tmux_session = shell_quote(&tmux_session),
                 cwd = shell_quote(&dispatch.cwd.display().to_string()),
-                command = shell_quote(adapter.command)
+                command = shell_quote(runtime_command)
             ),
             attach_command: format!("tmux attach -t {}", shell_quote(&tmux_session)),
             resume_command,
@@ -71,6 +100,7 @@ impl Launcher {
     pub fn launch(&self, dispatch: &DispatchPlan) -> Result<LaunchPreview> {
         let preview = self.dry_run(dispatch);
         let adapter = RuntimeAdapter::for_runtime(dispatch.runtime);
+        let runtime_command = self.runtime_command(&adapter);
         let output = Command::new(&self.tmux_bin)
             .arg("new-session")
             .arg("-d")
@@ -78,7 +108,7 @@ impl Launcher {
             .arg(&preview.tmux_session)
             .arg("-c")
             .arg(&dispatch.cwd)
-            .arg(adapter.command)
+            .arg(runtime_command)
             .output()
             .with_context(|| {
                 format!(
@@ -98,6 +128,22 @@ impl Launcher {
         }
 
         Ok(preview)
+    }
+
+    fn runtime_command<'a>(&'a self, adapter: &'a RuntimeAdapter) -> &'a str {
+        self.runtime_commands
+            .get(adapter.runtime)
+            .unwrap_or(adapter.command)
+    }
+
+    fn runtime_resume_command<'a>(&'a self, adapter: &'a RuntimeAdapter) -> Option<&'a str> {
+        self.runtime_commands
+            .get_resume(adapter.runtime)
+            .or_else(|| {
+                adapter
+                    .native_resume_available
+                    .then_some(adapter.native_resume_template)
+            })
     }
 
     pub fn send_keys(&self, session: &str, message: &str) -> Result<()> {
@@ -144,6 +190,60 @@ impl Launcher {
         } else {
             Ok(TmuxSessionState::Missing)
         }
+    }
+}
+
+impl RuntimeCommandOverrides {
+    fn from_env() -> Self {
+        Self {
+            claude: read_command_override("HELM_AGENT_CLAUDE_COMMAND"),
+            codex: read_command_override("HELM_AGENT_CODEX_COMMAND"),
+            opencode: read_command_override("HELM_AGENT_OPENCODE_COMMAND"),
+            claude_resume: read_command_override("HELM_AGENT_CLAUDE_RESUME_COMMAND"),
+            codex_resume: read_command_override("HELM_AGENT_CODEX_RESUME_COMMAND"),
+            opencode_resume: read_command_override("HELM_AGENT_OPENCODE_RESUME_COMMAND"),
+        }
+    }
+
+    fn get(&self, runtime: AgentRuntime) -> Option<&str> {
+        match runtime {
+            AgentRuntime::Claude => self.claude.as_deref(),
+            AgentRuntime::Codex => self.codex.as_deref(),
+            AgentRuntime::OpenCode => self.opencode.as_deref(),
+            AgentRuntime::Acp => None,
+        }
+    }
+
+    fn get_resume(&self, runtime: AgentRuntime) -> Option<&str> {
+        match runtime {
+            AgentRuntime::Claude => self.claude_resume.as_deref(),
+            AgentRuntime::Codex => self.codex_resume.as_deref(),
+            AgentRuntime::OpenCode => self.opencode_resume.as_deref(),
+            AgentRuntime::Acp => None,
+        }
+    }
+
+    fn set(&mut self, runtime: AgentRuntime, command: String) {
+        let command = normalize_command_override(command);
+        match runtime {
+            AgentRuntime::Claude => self.claude = command,
+            AgentRuntime::Codex => self.codex = command,
+            AgentRuntime::OpenCode => self.opencode = command,
+            AgentRuntime::Acp => {}
+        }
+    }
+}
+
+fn read_command_override(name: &str) -> Option<String> {
+    env::var(name).ok().and_then(normalize_command_override)
+}
+
+fn normalize_command_override(command: String) -> Option<String> {
+    let command = command.trim();
+    if command.is_empty() {
+        None
+    } else {
+        Some(command.to_string())
     }
 }
 
