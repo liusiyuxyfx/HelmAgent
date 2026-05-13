@@ -84,6 +84,7 @@ Doctor checks:
 - `HELM_AGENT_HOME`
 - `$HELM_AGENT_HOME/env`
 - `$HELM_AGENT_HOME/main-agent-template.md`
+- `$HELM_AGENT_HOME/skills/helm-agent-coordinator/SKILL.md`
 - `$HOME/.cargo/bin` in `PATH`
 - `helm-agent task board`
 
@@ -124,6 +125,16 @@ This creates or updates `/path/to/project/AGENTS.md` and `/path/to/project/CLAUD
 ```text
 @$HOME/.helm-agent/main-agent-template.md
 ```
+
+The installer also writes the coordinator skill:
+
+```text
+$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md
+```
+
+Project guidance stays short: it reminds the main agent to use the
+`helm-agent-coordinator` skill for delegated AI work and keeps the full workflow in
+the skill file.
 
 Use `--agent codex`, `--agent claude`, or `--agent opencode` when you only want one runtime's project guidance file.
 
@@ -204,6 +215,7 @@ The installer writes:
 ```bash
 $HOME/.helm-agent/env
 $HOME/.helm-agent/main-agent-template.md
+$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md
 ```
 
 with:
@@ -222,6 +234,7 @@ HELM_AGENT_HOME=$HOME/.helm-agent
 HELM_AGENT_CARGO_ROOT=$HOME/.cargo
 HELM_AGENT_BIN_DIR=$HOME/.cargo/bin
 HELM_AGENT_TEMPLATE_URL=https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/docs/agent-integrations/main-agent-template.md
+HELM_AGENT_COORDINATOR_SKILL_URL=https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md
 ```
 
 `HELM_AGENT_CARGO_ROOT` controls where `cargo install` writes the binary. `HELM_AGENT_BIN_DIR` controls the PATH line written to the env file and the PATH check in doctor; by default it is `$HELM_AGENT_CARGO_ROOT/bin`.

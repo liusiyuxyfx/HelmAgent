@@ -9,7 +9,9 @@ HELM_AGENT_CARGO_ROOT="${HELM_AGENT_CARGO_ROOT:-${CARGO_INSTALL_ROOT:-$HOME/.car
 HELM_AGENT_BIN_DIR="${HELM_AGENT_BIN_DIR:-$HELM_AGENT_CARGO_ROOT/bin}"
 HELM_AGENT_ENV_FILE="$HELM_AGENT_HOME/env"
 HELM_AGENT_TEMPLATE_FILE="$HELM_AGENT_HOME/main-agent-template.md"
+HELM_AGENT_COORDINATOR_SKILL_FILE="$HELM_AGENT_HOME/skills/helm-agent-coordinator/SKILL.md"
 HELM_AGENT_TEMPLATE_URL="${HELM_AGENT_TEMPLATE_URL:-https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/docs/agent-integrations/main-agent-template.md}"
+HELM_AGENT_COORDINATOR_SKILL_URL="${HELM_AGENT_COORDINATOR_SKILL_URL:-https://raw.githubusercontent.com/liusiyuxyfx/HelmAgent/main/docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md}"
 DRY_RUN=0
 PURGE=0
 
@@ -30,6 +32,7 @@ Environment:
   HELM_AGENT_CARGO_ROOT  Cargo install root, default: $HOME/.cargo
   HELM_AGENT_BIN_DIR   PATH/diagnostic binary directory, default: $HELM_AGENT_CARGO_ROOT/bin
   HELM_AGENT_TEMPLATE_URL  URL used when local template file is unavailable
+  HELM_AGENT_COORDINATOR_SKILL_URL  URL used when local coordinator skill is unavailable
 USAGE
 }
 
@@ -204,6 +207,28 @@ install_template() {
     fi
 }
 
+install_coordinator_skill() {
+    root="$(repo_root)"
+    local_skill="$root/docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md"
+    if is_local_checkout && [ -f "$local_skill" ]; then
+        plan "install skill $HELM_AGENT_COORDINATOR_SKILL_FILE"
+        if [ "$DRY_RUN" -eq 0 ]; then
+            install_skill_from_file "$local_skill"
+        fi
+        return 0
+    fi
+
+    plan "fetch skill $HELM_AGENT_COORDINATOR_SKILL_URL"
+    plan "install skill $HELM_AGENT_COORDINATOR_SKILL_FILE"
+    if [ "$DRY_RUN" -eq 0 ]; then
+        if ! have curl; then
+            log "missing: curl is required to fetch coordinator skill"
+            exit 1
+        fi
+        install_skill_from_url "$HELM_AGENT_COORDINATOR_SKILL_URL"
+    fi
+}
+
 ensure_template_target_safe() {
     if [ -L "$HELM_AGENT_TEMPLATE_FILE" ]; then
         log "refusing to update symlink template $HELM_AGENT_TEMPLATE_FILE"
@@ -215,8 +240,24 @@ ensure_template_target_safe() {
     fi
 }
 
+ensure_skill_target_safe() {
+    if [ -L "$HELM_AGENT_COORDINATOR_SKILL_FILE" ]; then
+        log "refusing to update symlink coordinator skill $HELM_AGENT_COORDINATOR_SKILL_FILE"
+        exit 1
+    fi
+    if [ -e "$HELM_AGENT_COORDINATOR_SKILL_FILE" ] && [ ! -f "$HELM_AGENT_COORDINATOR_SKILL_FILE" ]; then
+        log "refusing to update non-file coordinator skill $HELM_AGENT_COORDINATOR_SKILL_FILE"
+        exit 1
+    fi
+}
+
 template_temp_file() {
     mktemp "$HELM_AGENT_HOME/.main-agent-template.md.XXXXXX"
+}
+
+skill_temp_file() {
+    skill_dir=$(dirname -- "$HELM_AGENT_COORDINATOR_SKILL_FILE")
+    mktemp "$skill_dir/.SKILL.md.XXXXXX"
 }
 
 install_template_from_file() {
@@ -231,6 +272,19 @@ install_template_from_file() {
     mv -f -- "$tmp_file" "$HELM_AGENT_TEMPLATE_FILE"
 }
 
+install_skill_from_file() {
+    source_file=$1
+    skill_dir=$(dirname -- "$HELM_AGENT_COORDINATOR_SKILL_FILE")
+    mkdir -p "$skill_dir"
+    ensure_skill_target_safe
+    tmp_file="$(skill_temp_file)"
+    if ! cp "$source_file" "$tmp_file"; then
+        rm -f -- "$tmp_file"
+        exit 1
+    fi
+    mv -f -- "$tmp_file" "$HELM_AGENT_COORDINATOR_SKILL_FILE"
+}
+
 install_template_from_url() {
     template_url=$1
     mkdir -p "$HELM_AGENT_HOME"
@@ -243,6 +297,19 @@ install_template_from_url() {
     mv -f -- "$tmp_file" "$HELM_AGENT_TEMPLATE_FILE"
 }
 
+install_skill_from_url() {
+    skill_url=$1
+    skill_dir=$(dirname -- "$HELM_AGENT_COORDINATOR_SKILL_FILE")
+    mkdir -p "$skill_dir"
+    ensure_skill_target_safe
+    tmp_file="$(skill_temp_file)"
+    if ! curl -fsSL "$skill_url" -o "$tmp_file"; then
+        rm -f -- "$tmp_file"
+        exit 1
+    fi
+    mv -f -- "$tmp_file" "$HELM_AGENT_COORDINATOR_SKILL_FILE"
+}
+
 print_guidance() {
     cat <<GUIDANCE
 
@@ -251,6 +318,8 @@ Project integration:
   helm-agent agent prompt --runtime codex
   helm-agent board serve --host 127.0.0.1 --port 8765
   helm-agent task board
+  Coordinator skill:
+    $HELM_AGENT_COORDINATOR_SKILL_FILE
   Legacy manual include:
     @$HELM_AGENT_TEMPLATE_FILE
 
@@ -307,6 +376,7 @@ install_cmd() {
     ensure_home
     write_env
     install_template
+    install_coordinator_skill
     cargo_install
     run_help_check
     print_guidance
@@ -316,6 +386,7 @@ update_cmd() {
     require_tools
     ensure_home
     install_template
+    install_coordinator_skill
     cargo_install
     run_help_check
 }
@@ -434,6 +505,13 @@ doctor_cmd() {
         status=1
     fi
 
+    if [ -f "$HELM_AGENT_COORDINATOR_SKILL_FILE" ]; then
+        log "ok: coordinator skill $HELM_AGENT_COORDINATOR_SKILL_FILE"
+    else
+        log "missing: coordinator skill $HELM_AGENT_COORDINATOR_SKILL_FILE"
+        status=1
+    fi
+
     if path_contains_bin_dir; then
         log "ok: PATH contains $HELM_AGENT_BIN_DIR"
     else
@@ -466,6 +544,7 @@ repair_cmd() {
     ensure_home
     write_env
     install_template
+    install_coordinator_skill
     cargo_install
     doctor_cmd
 }

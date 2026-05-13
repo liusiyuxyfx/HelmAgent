@@ -12,6 +12,7 @@ HelmAgent 设计为本地运行。它把任务状态存储在 `HELM_AGENT_HOME` 
 
 - 持久化本地任务记录，覆盖 inbox、triage、queued、running、blocked、review、done 等状态。
 - 为 Codex、Claude Code、OpenCode 或全部运行时生成主 Agent 工作指引。
+- 提供 `helm-agent-coordinator` skill，用于主 Agent 的任务分发和 review 工作流。
 - 通过项目级 `AGENTS.md` 和 `CLAUDE.md` include 接入，不修改全局 Agent 配置。
 - 生成子 Agent 任务 brief，包含范围、恢复命令、最近事件和 review 指令。
 - 支持 Claude、Codex、OpenCode 的 `tmux` 分发预览和真实子 Agent 会话。
@@ -50,7 +51,9 @@ cd HelmAgent
 make install
 ```
 
-安装脚本会通过 `cargo install` 安装二进制文件，并默认把本地支持文件写入 `$HOME/.helm-agent`。
+安装脚本会通过 `cargo install` 安装二进制文件，并默认把本地支持文件写入
+`$HOME/.helm-agent`，包括
+`$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md`。
 
 ## 更新、修复和卸载
 
@@ -86,7 +89,10 @@ make uninstall
 helm-agent project init --path /path/to/project --agent all
 ```
 
-这会在项目的 `AGENTS.md` 和 `CLAUDE.md` 中加入 include，指向已安装的 `$HOME/.helm-agent/main-agent-template.md`。
+这会在项目的 `AGENTS.md` 和 `CLAUDE.md` 中加入 include，指向已安装的
+`$HOME/.helm-agent/main-agent-template.md`。模板会提醒主 Agent 优先使用
+`helm-agent-coordinator` skill；如果运行时没有 skill 机制，则回退读取
+`$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md`。
 
 为主 Agent 打印启动/操作提示词：
 

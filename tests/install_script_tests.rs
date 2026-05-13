@@ -55,7 +55,9 @@ fn install_dry_run_prints_install_steps() {
     assert!(stdout.contains("--locked --force --root"), "{stdout}");
     assert!(stdout.contains("write env"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
+    assert!(stdout.contains("install skill"), "{stdout}");
     assert!(stdout.contains("main-agent-template.md"), "{stdout}");
+    assert!(stdout.contains("helm-agent-coordinator"), "{stdout}");
     assert!(
         stdout.contains("helm-agent project init --path /path/to/project --agent all"),
         "{stdout}"
@@ -117,6 +119,7 @@ fn update_dry_run_reinstalls_without_data_deletion() {
     assert!(success, "{stdout}\n{stderr}");
     assert!(stdout.contains("cargo install --path"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
+    assert!(stdout.contains("install skill"), "{stdout}");
     assert!(!stdout.contains("remove data"), "{stdout}");
 }
 
@@ -127,6 +130,7 @@ fn repair_dry_run_recreates_env_and_runs_doctor() {
     assert!(success, "{stdout}\n{stderr}");
     assert!(stdout.contains("write env"), "{stdout}");
     assert!(stdout.contains("install template"), "{stdout}");
+    assert!(stdout.contains("install skill"), "{stdout}");
     assert!(stdout.contains("cargo install --path"), "{stdout}");
     assert!(stdout.contains("doctor"), "{stdout}");
 }
@@ -308,9 +312,15 @@ fn init_project_writes_agent_includes_and_installs_template() {
         .canonicalize()
         .unwrap()
         .join("main-agent-template.md");
+    let skill_path = home
+        .path()
+        .canonicalize()
+        .unwrap()
+        .join("skills/helm-agent-coordinator/SKILL.md");
     let agents_file = project.path().join("AGENTS.md");
     let claude_file = project.path().join("CLAUDE.md");
     assert!(template_path.exists(), "{stdout}");
+    assert!(skill_path.exists(), "{stdout}");
     assert!(agents_file.exists(), "{stdout}");
     assert!(claude_file.exists(), "{stdout}");
 
@@ -327,6 +337,12 @@ fn init_project_writes_agent_includes_and_installs_template() {
 
     let template = std::fs::read_to_string(template_path).unwrap();
     assert!(template.contains("HelmAgent"), "{template}");
+    let skill = std::fs::read_to_string(skill_path).unwrap();
+    assert!(skill.contains("name: helm-agent-coordinator"), "{skill}");
+    assert!(
+        skill.contains("helm-agent task dispatch") && skill.contains("helm-agent task resume"),
+        "{skill}"
+    );
 }
 
 #[cfg(unix)]
@@ -402,6 +418,8 @@ fn install_docs_cover_core_lifecycle_commands() {
         "HELM_AGENT_CARGO_ROOT",
         "HELM_AGENT_TEMPLATE_URL",
         "main-agent-template.md",
+        "helm-agent-coordinator",
+        "$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md",
         "@$HOME/.helm-agent/main-agent-template.md",
     ] {
         assert!(

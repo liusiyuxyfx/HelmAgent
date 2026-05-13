@@ -2,6 +2,16 @@
 
 HelmAgent should be the source of truth for delegated coding work. Claude Code, Codex, and other main agents should record task state in HelmAgent before handing work to a child agent, then read HelmAgent before reporting progress or completion to a human.
 
+Prefer the `helm-agent-coordinator` skill for delegated AI work. `helm-agent project
+init` installs a short project include and HelmAgent installs the skill source at:
+
+```text
+$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md
+```
+
+If the runtime does not expose skills, read that file as the fallback coordinator
+procedure.
+
 ## Project Setup
 
 Install project-local guidance before starting the main agent:
@@ -217,4 +227,4 @@ Main agents should report HelmAgent state, not memory or assumptions. If `helm-a
 
 Use `helm-agent task sync <id>` before describing tmux session health. `sync` can mark a running task blocked when its recorded tmux session is gone, while dry-run queued tasks stay queued.
 
-For copyable coordinator instructions, use [Main-Agent Operating Template](main-agent-template.md).
+For the short project include reminder, use [Main-Agent Reminder](main-agent-template.md).

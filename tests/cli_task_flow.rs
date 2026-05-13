@@ -284,8 +284,15 @@ fn project_init_bootstraps_missing_installed_template() {
     let template_content = fs::read_to_string(template).unwrap();
     assert!(agents.contains(&include), "{agents}");
     assert!(
-        template_content.contains("# HelmAgent Main-Agent Operating Template"),
+        template_content.contains("# HelmAgent Main-Agent Reminder"),
         "{template_content}"
+    );
+    let skill =
+        fs::read_to_string(home.path().join("skills/helm-agent-coordinator/SKILL.md")).unwrap();
+    assert!(skill.contains("name: helm-agent-coordinator"), "{skill}");
+    assert!(
+        skill.contains("helm-agent task dispatch") && skill.contains("helm-agent task resume"),
+        "{skill}"
     );
 }
 
@@ -3945,28 +3952,51 @@ fn event_rejects_invalid_type() {
 }
 
 #[test]
-fn main_agent_template_contains_required_operating_commands() {
+fn main_agent_template_points_to_coordinator_skill() {
     let template = fs::read_to_string("docs/agent-integrations/main-agent-template.md").unwrap();
 
     for required in [
+        "helm-agent-coordinator",
         "helm-agent task board",
-        "helm-agent task create",
-        "helm-agent task triage",
-        "helm-agent task sync",
-        "helm-agent task sync --all",
+        "helm-agent task status <id>",
+        "create and triage",
+        "helm-agent task resume <id>",
         "helm-agent task brief",
-        "helm-agent task dispatch --dry-run",
-        "helm-agent board serve --host 127.0.0.1 --port 8765",
-        "--send-brief",
-        "helm-agent task mark",
-        "task review --accept",
-        "--confirm",
-        "Do not claim code-changing work is complete",
-        "Dogfood Loop",
+        "Do not claim",
     ] {
         assert!(
             template.contains(required),
             "missing `{required}` from template:\n{template}"
+        );
+    }
+}
+
+#[test]
+fn coordinator_skill_contains_required_workflow_commands() {
+    let skill =
+        fs::read_to_string("docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md")
+            .unwrap();
+
+    for required in [
+        "name: helm-agent-coordinator",
+        "Use when",
+        "helm-agent task board",
+        "helm-agent task create",
+        "helm-agent task triage",
+        "helm-agent task dispatch",
+        "helm-agent task dispatch PM-YYYYMMDD-001 --runtime claude --send-brief",
+        "--runtime acp",
+        "helm-agent task resume",
+        "helm-agent task brief",
+        "helm-agent task sync --all",
+        "helm-agent task review",
+        "`--send-brief` is opt-in",
+        "Brief sent: no",
+        "Do not claim",
+    ] {
+        assert!(
+            skill.contains(required),
+            "missing `{required}` from skill:\n{skill}"
         );
     }
 }
@@ -4025,8 +4055,10 @@ fn main_agent_guide_uses_consistent_common_task_id_for_brief_flow() {
 fn docs_cover_send_brief_as_opt_in_real_dispatch() {
     let readme = fs::read_to_string("README.md").unwrap();
     let guide = fs::read_to_string("docs/agent-integrations/main-agent.md").unwrap();
-    let template = fs::read_to_string("docs/agent-integrations/main-agent-template.md").unwrap();
-    let combined = format!("{readme}\n{guide}\n{template}");
+    let skill =
+        fs::read_to_string("docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md")
+            .unwrap();
+    let combined = format!("{readme}\n{guide}\n{skill}");
 
     for required in [
         "helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief",
@@ -4045,7 +4077,9 @@ fn docs_cover_send_brief_as_opt_in_real_dispatch() {
 #[test]
 fn send_brief_docs_keep_ids_consistent_per_document() {
     let readme = fs::read_to_string("README.md").unwrap();
-    let template = fs::read_to_string("docs/agent-integrations/main-agent-template.md").unwrap();
+    let skill =
+        fs::read_to_string("docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md")
+            .unwrap();
 
     assert!(
         readme.contains("helm-agent task brief PM-20260511-001 --write")
@@ -4058,13 +4092,12 @@ fn send_brief_docs_keep_ids_consistent_per_document() {
         "{readme}"
     );
     assert!(
-        template.contains("helm-agent task dispatch PM-YYYYMMDD-001 --runtime claude --send-brief"),
-        "{template}"
+        skill.contains("helm-agent task dispatch PM-YYYYMMDD-001 --runtime claude --send-brief"),
+        "{skill}"
     );
     assert!(
-        !template
-            .contains("helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief"),
-        "{template}"
+        !skill.contains("helm-agent task dispatch PM-20260509-101 --runtime claude --send-brief"),
+        "{skill}"
     );
 }
 

@@ -16,6 +16,7 @@ stdio.
 
 - Durable local task records for inbox, triage, queued, running, blocked, review, and done states.
 - Main-agent operating guidance for Codex, Claude Code, OpenCode, or all supported runtimes.
+- Packaged `helm-agent-coordinator` skill for main-agent delegation workflows.
 - Project-local `AGENTS.md` and `CLAUDE.md` includes, without modifying global agent settings.
 - Child-agent task briefs with scope, recovery commands, recent events, and review instructions.
 - `tmux` dispatch previews and real child-agent sessions for Claude, Codex, and OpenCode.
@@ -57,7 +58,8 @@ make install
 ```
 
 The installer places the binary through `cargo install` and writes local support files
-under `$HOME/.helm-agent` by default.
+under `$HOME/.helm-agent` by default, including
+`$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md`.
 
 ## Update, Repair, And Uninstall
 
@@ -97,7 +99,9 @@ helm-agent project init --path /path/to/project --agent all
 ```
 
 This adds project-local includes to `AGENTS.md` and `CLAUDE.md` pointing at the installed
-template under `$HOME/.helm-agent/main-agent-template.md`.
+template under `$HOME/.helm-agent/main-agent-template.md`. The template tells the
+main agent to prefer the `helm-agent-coordinator` skill and falls back to the
+installed skill source at `$HOME/.helm-agent/skills/helm-agent-coordinator/SKILL.md`.
 
 Start or instruct a main agent with the generated operating prompt:
 

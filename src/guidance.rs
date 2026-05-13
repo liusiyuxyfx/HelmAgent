@@ -5,9 +5,14 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub const MAIN_AGENT_TEMPLATE_FILE: &str = "main-agent-template.md";
+pub const COORDINATOR_SKILL_FILE: &str = "skills/helm-agent-coordinator/SKILL.md";
 pub const FALLBACK_MAIN_AGENT_TEMPLATE: &str = "docs/agent-integrations/main-agent-template.md";
+pub const FALLBACK_COORDINATOR_SKILL: &str =
+    "docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md";
 pub const BUNDLED_MAIN_AGENT_TEMPLATE: &str =
     include_str!("../docs/agent-integrations/main-agent-template.md");
+pub const BUNDLED_COORDINATOR_SKILL: &str =
+    include_str!("../docs/agent-integrations/skills/helm-agent-coordinator/SKILL.md");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuidanceRuntime {
@@ -53,8 +58,16 @@ pub fn installed_main_agent_template_path() -> Result<PathBuf> {
     Ok(canonical_helm_agent_home()?.join(MAIN_AGENT_TEMPLATE_FILE))
 }
 
+pub fn installed_coordinator_skill_path() -> Result<PathBuf> {
+    Ok(canonical_helm_agent_home()?.join(COORDINATOR_SKILL_FILE))
+}
+
 pub fn fallback_main_agent_template_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FALLBACK_MAIN_AGENT_TEMPLATE)
+}
+
+pub fn fallback_coordinator_skill_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FALLBACK_COORDINATOR_SKILL)
 }
 
 pub fn main_agent_template_path() -> Result<PathBuf> {
@@ -85,6 +98,16 @@ pub fn ensure_installed_main_agent_template() -> Result<PathBuf> {
     Ok(installed)
 }
 
+pub fn ensure_installed_coordinator_skill() -> Result<PathBuf> {
+    let installed = installed_coordinator_skill_path()?;
+    if installed_skill_exists(&installed)? {
+        return Ok(installed);
+    }
+
+    write_new_installed_skill(&installed)?;
+    Ok(installed)
+}
+
 pub fn render_main_agent_prompt(runtime: GuidanceRuntime) -> Result<String> {
     Ok(render_main_agent_prompt_from_template(
         &read_main_agent_template()?,
@@ -105,6 +128,7 @@ pub fn add_installed_project_guidance_include(
     guidance_file: impl Into<GuidanceFile>,
 ) -> Result<PathBuf> {
     let template_path = ensure_installed_main_agent_template()?;
+    ensure_installed_coordinator_skill()?;
     add_project_guidance_include(project_path, guidance_file, &template_path)
 }
 
@@ -218,6 +242,19 @@ fn installed_template_exists(path: &Path) -> Result<bool> {
     }
 }
 
+fn installed_skill_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            validate_installed_skill_file(path, &metadata)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => {
+            Err(error).with_context(|| format!("inspect coordinator skill {}", path.display()))
+        }
+    }
+}
+
 fn validate_installed_template_file(path: &Path, metadata: &Metadata) -> Result<()> {
     let file_type = metadata.file_type();
     if file_type.is_symlink() {
@@ -247,6 +284,32 @@ fn validate_installed_template_file(path: &Path, metadata: &Metadata) -> Result<
     Ok(())
 }
 
+fn validate_installed_skill_file(path: &Path, metadata: &Metadata) -> Result<()> {
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() {
+        bail!("refuse to use symlink coordinator skill {}", path.display());
+    }
+    if !file_type.is_file() {
+        bail!(
+            "refuse to use non-file coordinator skill {}",
+            path.display()
+        );
+    }
+
+    let home = canonical_helm_agent_home()?;
+    let canonical = path
+        .canonicalize()
+        .with_context(|| format!("canonicalize coordinator skill {}", path.display()))?;
+    if !canonical.starts_with(&home) {
+        bail!(
+            "refuse to use coordinator skill outside HelmAgent home: {}",
+            canonical.display()
+        );
+    }
+
+    Ok(())
+}
+
 fn write_new_installed_template(path: &Path) -> Result<()> {
     match create_new_template_file(path) {
         Ok(mut file) => file
@@ -259,6 +322,25 @@ fn write_new_installed_template(path: &Path) -> Result<()> {
         Err(error) => {
             Err(error).with_context(|| format!("create installed template {}", path.display()))
         }
+    }
+}
+
+fn write_new_installed_skill(path: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("create coordinator skill directory {}", parent.display()))?;
+    }
+
+    match create_new_template_file(path) {
+        Ok(mut file) => file
+            .write_all(BUNDLED_COORDINATOR_SKILL.as_bytes())
+            .with_context(|| format!("write installed coordinator skill {}", path.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            installed_skill_exists(path)?;
+            Ok(())
+        }
+        Err(error) => Err(error)
+            .with_context(|| format!("create installed coordinator skill {}", path.display())),
     }
 }
 
