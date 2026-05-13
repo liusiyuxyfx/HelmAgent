@@ -1,4 +1,5 @@
 use crate::acp_adapter::{self, AcpAgentConfig};
+use crate::adapter::RuntimeAdapter;
 use crate::brief;
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
@@ -6,13 +7,15 @@ use crate::launcher::{DispatchPlan, Launcher};
 use crate::output;
 use crate::paths::canonical_helm_agent_home;
 use crate::policy::{DispatchDecision, PolicyInput};
+use crate::runtime_profile;
 use crate::store::TaskStore;
 use crate::task_actions::{self, MarkAction, ReviewAction};
 use crate::web_board;
 use anyhow::{bail, Context, Result};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use time::OffsetDateTime;
 
 #[derive(Debug, Parser)]
@@ -30,6 +33,7 @@ enum Command {
     Agent(AgentCommand),
     Board(BoardCommand),
     Acp(AcpCommand),
+    Runtime(RuntimeCommand),
 }
 
 #[derive(Debug, Args)]
@@ -138,6 +142,39 @@ struct BoardServeArgs {
     host: String,
     #[arg(long, default_value_t = 8765)]
     port: u16,
+}
+
+#[derive(Debug, Args)]
+struct RuntimeCommand {
+    #[command(subcommand)]
+    command: RuntimeSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RuntimeSubcommand {
+    Doctor,
+    Profile(RuntimeProfileCommand),
+}
+
+#[derive(Debug, Args)]
+struct RuntimeProfileCommand {
+    #[command(subcommand)]
+    command: RuntimeProfileSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum RuntimeProfileSubcommand {
+    Doctor,
+    Set(RuntimeProfileSetArgs),
+}
+
+#[derive(Debug, Args)]
+struct RuntimeProfileSetArgs {
+    runtime: RuntimeArg,
+    #[arg(long)]
+    command: Option<String>,
+    #[arg(long)]
+    resume: Option<String>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -421,7 +458,287 @@ pub fn run() -> Result<()> {
         Command::Agent(agent) => handle_agent(agent),
         Command::Board(board) => handle_board(board, &store),
         Command::Acp(acp) => handle_acp(acp, &store),
+        Command::Runtime(runtime) => handle_runtime(runtime, &store),
     }
+}
+
+fn handle_runtime(runtime: RuntimeCommand, store: &TaskStore) -> Result<()> {
+    match runtime.command {
+        RuntimeSubcommand::Doctor => print_runtime_doctor(store),
+        RuntimeSubcommand::Profile(profile) => handle_runtime_profile(profile, store),
+    }
+}
+
+fn handle_runtime_profile(profile: RuntimeProfileCommand, store: &TaskStore) -> Result<()> {
+    match profile.command {
+        RuntimeProfileSubcommand::Doctor => print_runtime_doctor(store),
+        RuntimeProfileSubcommand::Set(args) => {
+            if args.command.is_none() && args.resume.is_none() {
+                bail!("runtime profile set requires --command, --resume, or both");
+            }
+            let runtime = AgentRuntime::from(args.runtime);
+            let mut profile = runtime_profile::load_runtime_profile(store)?;
+            profile.set(runtime, args.command, args.resume)?;
+            let path = runtime_profile::save_runtime_profile(store, &profile)?;
+            println!("Saved runtime profile {}", path.display());
+
+            let saved = profile
+                .entry(runtime)
+                .expect("runtime profile entry exists");
+            match saved.command.as_deref() {
+                Some(command) => println!("{} command: {}", runtime.as_str(), command),
+                None => println!("{} command: unchanged", runtime.as_str()),
+            }
+            match saved.resume.as_deref() {
+                Some(resume) => println!("{} resume: {}", runtime.as_str(), resume),
+                None => println!("{} resume: unchanged", runtime.as_str()),
+            }
+            Ok(())
+        }
+    }
+}
+
+fn print_runtime_doctor(store: &TaskStore) -> Result<()> {
+    let profile = runtime_profile::load_runtime_profile(store)?;
+    let profile_path = runtime_profile::runtime_profile_path(store);
+    let tmux_bin = tmux_bin_from_env();
+    println!("Runtime profile: {}", profile_path.display());
+    println!(
+        "Runtime profile exists: {}",
+        if profile_path.exists() { "yes" } else { "no" }
+    );
+    println!("tmux: {}", tmux_status(&tmux_bin));
+    println!(
+        "tmux new-session -e: {}",
+        tmux_env_support_status(&tmux_bin)
+    );
+
+    for runtime in [
+        AgentRuntime::Claude,
+        AgentRuntime::Codex,
+        AgentRuntime::OpenCode,
+    ] {
+        let (command, source) = effective_runtime_command(runtime, &profile);
+        let resume = effective_runtime_resume(runtime, &profile, &command);
+        println!(
+            "{} command: {} ({}) [{}]",
+            runtime.as_str(),
+            command,
+            source,
+            command_status(&command)
+        );
+        match resume {
+            Some((resume, source)) => {
+                println!("{} resume: {} ({})", runtime.as_str(), resume, source);
+            }
+            None => {
+                println!("{} resume: none (default)", runtime.as_str());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn effective_runtime_command(
+    runtime: AgentRuntime,
+    profile: &runtime_profile::RuntimeProfile,
+) -> (String, &'static str) {
+    let adapter = RuntimeAdapter::for_runtime(runtime);
+    if let Some(value) = env_runtime_value(command_env_name(runtime)) {
+        return (value, "env");
+    }
+    if let Some(value) = profile
+        .entry(runtime)
+        .and_then(|entry| entry.command.as_deref())
+        .and_then(normalize_runtime_value)
+    {
+        return (value.to_string(), "profile");
+    }
+    (adapter.command.to_string(), "default")
+}
+
+fn effective_runtime_resume(
+    runtime: AgentRuntime,
+    profile: &runtime_profile::RuntimeProfile,
+    runtime_command: &str,
+) -> Option<(String, &'static str)> {
+    let adapter = RuntimeAdapter::for_runtime(runtime);
+    if let Some(value) = env_runtime_value(resume_env_name(runtime)) {
+        return Some((value, "env"));
+    }
+    if let Some(value) = profile
+        .entry(runtime)
+        .and_then(|entry| entry.resume.as_deref())
+        .and_then(normalize_runtime_value)
+    {
+        return Some((value.to_string(), "profile"));
+    }
+    if !adapter.native_resume_available {
+        return None;
+    }
+    if runtime_command == adapter.command {
+        return Some((adapter.native_resume_template.to_string(), "default"));
+    }
+
+    let suffix = adapter
+        .native_resume_template
+        .strip_prefix(adapter.command)
+        .unwrap_or("");
+    Some((format!("{runtime_command}{suffix}"), "derived"))
+}
+
+fn command_env_name(runtime: AgentRuntime) -> &'static str {
+    match runtime {
+        AgentRuntime::Claude => "HELM_AGENT_CLAUDE_COMMAND",
+        AgentRuntime::Codex => "HELM_AGENT_CODEX_COMMAND",
+        AgentRuntime::OpenCode => "HELM_AGENT_OPENCODE_COMMAND",
+        AgentRuntime::Acp => "",
+    }
+}
+
+fn resume_env_name(runtime: AgentRuntime) -> &'static str {
+    match runtime {
+        AgentRuntime::Claude => "HELM_AGENT_CLAUDE_RESUME_COMMAND",
+        AgentRuntime::Codex => "HELM_AGENT_CODEX_RESUME_COMMAND",
+        AgentRuntime::OpenCode => "HELM_AGENT_OPENCODE_RESUME_COMMAND",
+        AgentRuntime::Acp => "",
+    }
+}
+
+fn env_runtime_value(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return None;
+    }
+    std::env::var(name)
+        .ok()
+        .as_deref()
+        .and_then(normalize_runtime_value)
+        .map(ToString::to_string)
+}
+
+fn normalize_runtime_value(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+fn command_status(command: &str) -> String {
+    let Some(executable) = command.split_whitespace().next() else {
+        return "missing command".to_string();
+    };
+    if command_exists(executable) {
+        format!("ok: {executable}")
+    } else {
+        format!("missing: {executable}")
+    }
+}
+
+fn tmux_bin_from_env() -> PathBuf {
+    std::env::var_os("HELM_AGENT_TMUX_BIN")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("tmux"))
+}
+
+fn tmux_status(tmux_bin: &Path) -> String {
+    match tmux_version(tmux_bin) {
+        Ok(version) if version.is_empty() => format!("ok: {}", tmux_bin.display()),
+        Ok(version) => format!("ok: {} ({version})", tmux_bin.display()),
+        Err(message) => message,
+    }
+}
+
+fn tmux_version(tmux_bin: &Path) -> std::result::Result<String, String> {
+    let output = ProcessCommand::new(tmux_bin)
+        .arg("-V")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|error| format!("missing: {} ({error})", tmux_bin.display()))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            Err(format!(
+                "failed: {} ({})",
+                tmux_bin.display(),
+                output.status
+            ))
+        } else {
+            Err(format!("failed: {} ({stderr})", tmux_bin.display()))
+        }
+    }
+}
+
+fn command_exists(executable: &str) -> bool {
+    ProcessCommand::new("sh")
+        .arg("-c")
+        .arg(format!(
+            "command -v {}",
+            shell_quote_for_process(executable)
+        ))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn tmux_env_support_status(tmux_bin: &Path) -> String {
+    let session = format!(
+        "helm-agent-doctor-{}-{}",
+        std::process::id(),
+        OffsetDateTime::now_utc().unix_timestamp_nanos()
+    );
+    let output = ProcessCommand::new(tmux_bin)
+        .arg("new-session")
+        .arg("-d")
+        .arg("-e")
+        .arg("HELM_AGENT_DOCTOR=1")
+        .arg("-s")
+        .arg(&session)
+        .arg("true")
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .output();
+
+    match output {
+        Ok(output) if output.status.success() => {
+            let _ = ProcessCommand::new(tmux_bin)
+                .arg("kill-session")
+                .arg("-t")
+                .arg(&session)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status();
+            "ok".to_string()
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            if stderr.is_empty() {
+                format!("failed ({})", output.status)
+            } else {
+                format!("failed ({stderr})")
+            }
+        }
+        Err(error) => format!("missing: {} ({error})", tmux_bin.display()),
+    }
+}
+
+fn shell_quote_for_process(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | ':'))
+    {
+        return value.to_string();
+    }
+
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 fn handle_acp(acp: AcpCommand, store: &TaskStore) -> Result<()> {
@@ -547,6 +864,13 @@ fn project_agent_files(agent: ProjectAgentArg) -> &'static [GuidanceFile] {
         ProjectAgentArg::Claude => &[GuidanceFile::Claude],
         ProjectAgentArg::All => &[GuidanceFile::Agents, GuidanceFile::Claude],
     }
+}
+
+fn launcher_for_store(store: &TaskStore) -> Result<Launcher> {
+    let profile = runtime_profile::load_runtime_profile(store)?;
+    Ok(Launcher::new()
+        .with_runtime_profile(&profile)
+        .with_helm_agent_home(store.root().display().to_string()))
 }
 
 fn handle_task_sync(args: SyncArgs, store: &TaskStore) -> Result<()> {
@@ -925,7 +1249,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 );
             }
 
-            let launcher = Launcher::new().with_helm_agent_home(store.root().display().to_string());
+            let launcher = launcher_for_store(store)?;
             let launch = launcher.dry_run(&dispatch);
 
             task.status = TaskStatus::Queued;

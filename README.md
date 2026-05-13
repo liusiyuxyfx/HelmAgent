@@ -227,13 +227,25 @@ export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
 export HELM_AGENT_OPENCODE_COMMAND=opencode
 ```
 
-Runtime command overrides are optional. They are useful when the executable HelmAgent
-should launch differs from the runtime name. For example, if Claude Code is exposed as
-`mc --code` on your machine, set `HELM_AGENT_CLAUDE_COMMAND` and
-`HELM_AGENT_CLAUDE_RESUME_COMMAND` before dispatch. These values are passed to tmux as
-trusted shell command strings; use a wrapper script if the command path needs complex
-quoting. Set `HELM_AGENT_OPENCODE_RESUME_COMMAND` only when your OpenCode version
-supports native resume.
+Runtime command overrides are optional. If no override is configured, `--runtime
+claude` launches `claude` and records `claude --resume <session-id>`.
+
+For persistent local configuration, prefer the runtime profile:
+
+```bash
+helm-agent runtime profile set claude \
+  --command "mc --code" \
+  --resume "mc --code --resume <session-id>"
+
+helm-agent runtime profile doctor
+helm-agent runtime doctor
+```
+
+Environment variables still work as one-shot dispatch overrides and take precedence
+over the profile. Runtime commands are passed to tmux as trusted shell command
+strings; use a wrapper script if the command path needs complex quoting. Set
+`HELM_AGENT_OPENCODE_RESUME_COMMAND` only when your OpenCode version supports native
+resume.
 
 ## Development
 

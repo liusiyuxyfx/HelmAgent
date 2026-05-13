@@ -11,6 +11,7 @@ Environment:
   HELM_AGENT_REAL_RUN_RUNTIME=claude     Runtime for dry-run/tmux. Default: claude
   HELM_AGENT_REAL_RUN_PROJECT=/path      Project to initialize. Default: temp dir
   HELM_AGENT_REAL_RUN_HOME=/path         HelmAgent home. Default: temp dir
+  HELM_AGENT_REAL_RUN_PROFILE_HOME=/path Copy runtime/profile.yaml from this home into temp home.
   HELM_AGENT_REAL_RUN_ID=PM-YYYYMMDD-ID  Task id. Default: timestamp-based id
   HELM_AGENT_REAL_RUN_KEEP=1             Keep temp home/project after exit.
   HELM_AGENT_REAL_RUN_ACP_NAME=name      ACP agent name. Default: real-run-acp
@@ -56,6 +57,7 @@ CONFIRM="${HELM_AGENT_REAL_RUN_CONFIRM:-0}"
 ACP_NAME="${HELM_AGENT_REAL_RUN_ACP_NAME:-real-run-acp}"
 ACP_COMMAND="${HELM_AGENT_REAL_RUN_ACP_COMMAND:-}"
 ACP_ARG="${HELM_AGENT_REAL_RUN_ACP_ARG:-}"
+PROFILE_HOME="${HELM_AGENT_REAL_RUN_PROFILE_HOME:-${HELM_AGENT_HOME:-$HOME/.helm-agent}}"
 
 if [ "$MODE" = "tmux" ] && [ "$CONFIRM" != "1" ]; then
   cat >&2 <<CONFIRMATION
@@ -93,6 +95,12 @@ else
   OWN_HOME=1
 fi
 
+if [ "$OWN_HOME" = "1" ] && [ -f "$PROFILE_HOME/runtime/profile.yaml" ]; then
+  mkdir -p "$RUN_HOME/runtime"
+  cp "$PROFILE_HOME/runtime/profile.yaml" "$RUN_HOME/runtime/profile.yaml"
+  printf 'Imported runtime profile=%s\n' "$PROFILE_HOME/runtime/profile.yaml"
+fi
+
 if [ -n "${HELM_AGENT_REAL_RUN_PROJECT:-}" ]; then
   RUN_PROJECT="$HELM_AGENT_REAL_RUN_PROJECT"
   mkdir -p "$RUN_PROJECT"
@@ -126,6 +134,7 @@ print_next_review_steps() {
   cat <<STEPS
 
 Next review commands:
+  export HELM_AGENT_HOME="$RUN_HOME"
   helm-agent board serve --host 127.0.0.1 --port 8765
   helm-agent task status $TASK_ID
   helm-agent task review $TASK_ID --request-changes "Describe the required fix"

@@ -8,6 +8,7 @@ pub mod launcher;
 pub mod output;
 pub mod paths;
 pub mod policy;
+pub mod runtime_profile;
 pub mod store;
 pub mod task_actions;
 pub mod web_board;

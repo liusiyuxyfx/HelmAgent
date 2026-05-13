@@ -41,6 +41,7 @@ fn real_run_quickstart_documents_safe_and_real_paths() {
         docs.contains("helm-agent board serve --host 127.0.0.1 --port 8765"),
         "{docs}"
     );
+    assert!(docs.contains("HELM_AGENT_HOME"), "{docs}");
     assert!(docs.contains("helm-agent task review"), "{docs}");
 }
 
@@ -77,6 +78,15 @@ fn real_run_script_keeps_real_dispatch_opt_in_and_cleanup_safe() {
     assert!(script.contains("task dispatch"), "{script}");
     assert!(script.contains("acp agent check"), "{script}");
     assert!(script.contains("task sync --all"), "{script}");
+    assert!(
+        script.contains("export HELM_AGENT_HOME=\"$RUN_HOME\""),
+        "{script}"
+    );
+    assert!(
+        script.contains("HELM_AGENT_REAL_RUN_PROFILE_HOME"),
+        "{script}"
+    );
+    assert!(script.contains("runtime/profile.yaml"), "{script}");
 }
 
 #[cfg(unix)]

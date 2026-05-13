@@ -210,7 +210,21 @@ export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
 export HELM_AGENT_OPENCODE_COMMAND=opencode
 ```
 
-运行时命令覆盖是可选的。当 HelmAgent 应启动的真实命令和 runtime 名称不一致时使用它。例如你的机器上 Claude Code 入口是 `mc --code`，就可以在分发前设置 `HELM_AGENT_CLAUDE_COMMAND` 和 `HELM_AGENT_CLAUDE_RESUME_COMMAND`。这些值会作为可信 shell 命令字符串传给 tmux；如果命令路径需要复杂引号，建议用 wrapper script。仅当你的 OpenCode 版本支持原生 resume 时，再设置 `HELM_AGENT_OPENCODE_RESUME_COMMAND`。
+运行时命令覆盖是可选的。如果没有配置覆盖，`--runtime claude` 会启动
+`claude`，并记录 `claude --resume <session-id>`。
+
+持久化本机配置时，优先使用 runtime profile：
+
+```bash
+helm-agent runtime profile set claude \
+  --command "mc --code" \
+  --resume "mc --code --resume <session-id>"
+
+helm-agent runtime profile doctor
+helm-agent runtime doctor
+```
+
+环境变量仍可作为一次性分发覆盖，并且优先级高于 profile。运行时命令会作为可信 shell 命令字符串传给 tmux；如果命令路径需要复杂引号，建议使用 wrapper script。仅当你的 OpenCode 版本支持原生 resume 时，再设置 `HELM_AGENT_OPENCODE_RESUME_COMMAND`。
 
 ## 开发
 

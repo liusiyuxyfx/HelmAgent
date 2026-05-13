@@ -114,6 +114,20 @@ fn fake_tmux_has_session_script(path: &Path, record_path: &Path, exit_code: i32)
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn fake_tmux_doctor_script(path: &Path, record_path: &Path) {
+    let record_path = record_path.display().to_string().replace('\'', "'\\''");
+    fs::write(
+        path,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' CALL >> '{record_path}'\nfor arg in \"$@\"; do\n  printf '%s\\n' \"$arg\"\ndone >> '{record_path}'\nif [ \"$1\" = '-V' ]; then\n  printf '%s\\n' 'tmux 3.6a'\nfi\n"
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn fake_acp_agent_script(path: &Path) {
     fs::write(
         path,
@@ -1848,6 +1862,264 @@ fn dispatch_respects_runtime_command_env_override() {
                     shell_quote_for_test(&env_arg)
                 ))
     }));
+}
+
+#[test]
+fn runtime_profile_set_persists_and_doctor_reports_effective_command() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "runtime",
+            "profile",
+            "set",
+            "claude",
+            "--command",
+            "mc --code",
+            "--resume",
+            "mc --code --resume <session-id>",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Saved runtime profile"))
+        .stdout(contains("claude command: mc --code"))
+        .stdout(contains("claude resume: mc --code --resume <session-id>"));
+
+    let profile = fs::read_to_string(home.path().join("runtime/profile.yaml")).unwrap();
+    assert!(profile.contains("claude:"), "{profile}");
+    assert!(profile.contains("command: mc --code"), "{profile}");
+    assert!(
+        profile.contains("resume: mc --code --resume <session-id>"),
+        "{profile}"
+    );
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "profile", "doctor"])
+        .assert()
+        .success()
+        .stdout(contains("Runtime profile:"))
+        .stdout(contains("claude command: mc --code (profile)"))
+        .stdout(contains(
+            "claude resume: mc --code --resume <session-id> (profile)",
+        ));
+}
+
+#[test]
+fn runtime_doctor_reports_default_claude_when_profile_is_absent() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "doctor"])
+        .assert()
+        .success()
+        .stdout(contains("Runtime profile:"))
+        .stdout(contains("claude command: claude (default)"))
+        .stdout(contains(
+            "claude resume: claude --resume <session-id> (default)",
+        ));
+}
+
+#[test]
+fn runtime_doctor_uses_configured_tmux_bin_and_probes_env_support() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux-doctor");
+    let record_path = temp.path().join("tmux-doctor-args.txt");
+    fake_tmux_doctor_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args(["runtime", "doctor"])
+        .assert()
+        .success()
+        .stdout(contains(format!("tmux: ok: {}", tmux_bin.display())))
+        .stdout(contains("tmux new-session -e: ok"));
+
+    let recorded = fs::read_to_string(record_path).unwrap();
+    assert!(recorded.contains("-V"), "{recorded}");
+    assert!(recorded.contains("new-session"), "{recorded}");
+    assert!(recorded.contains("-e"), "{recorded}");
+    assert!(recorded.contains("HELM_AGENT_DOCTOR=1"), "{recorded}");
+}
+
+#[test]
+fn runtime_profile_set_rejects_empty_override_values() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "profile", "set", "claude", "--command", "   "])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "runtime profile set requires a non-empty command or resume value",
+        ));
+
+    assert!(!home.path().join("runtime/profile.yaml").exists());
+}
+
+#[test]
+fn dispatch_derives_resume_command_from_profile_command_when_resume_is_absent() {
+    let home = tempdir().unwrap();
+    fs::create_dir_all(home.path().join("runtime")).unwrap();
+    fs::write(
+        home.path().join("runtime/profile.yaml"),
+        "runtimes:\n  claude:\n    command: mc --code\n",
+    )
+    .unwrap();
+
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260513-DERIVED",
+            "--title",
+            "Derive runtime resume",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260513-DERIVED",
+            "--runtime",
+            "claude",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Resume: mc --code --resume <session-id>"));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260513-DERIVED").unwrap();
+    assert_eq!(
+        task.recovery.resume_command.as_deref(),
+        Some("mc --code --resume <session-id>")
+    );
+}
+
+#[test]
+fn dispatch_uses_runtime_profile_command_when_env_override_absent() {
+    let home = tempdir().unwrap();
+    fs::create_dir_all(home.path().join("runtime")).unwrap();
+    fs::write(
+        home.path().join("runtime/profile.yaml"),
+        "runtimes:\n  claude:\n    command: mc --code\n    resume: mc --code --resume <session-id>\n",
+    )
+    .unwrap();
+
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+    let env_arg = helm_agent_home_arg_for_test(home.path());
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260513-PROFILE",
+            "--title",
+            "Dispatch with runtime profile",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260513-PROFILE",
+            "--runtime",
+            "claude",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Started PM-20260513-PROFILE"))
+        .stdout(contains(format!(
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260513-PROFILE-claude -c /repo/project 'mc --code'",
+            shell_quote_for_test(&env_arg)
+        )))
+        .stdout(contains("Resume: mc --code --resume <session-id>"));
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        format!(
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260513-PROFILE-claude\n-c\n/repo/project\nmc --code\n"
+        )
+    );
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260513-PROFILE").unwrap();
+    assert_eq!(
+        task.recovery.resume_command.as_deref(),
+        Some("mc --code --resume <session-id>")
+    );
+}
+
+#[test]
+fn runtime_env_override_takes_precedence_over_runtime_profile() {
+    let home = tempdir().unwrap();
+    fs::create_dir_all(home.path().join("runtime")).unwrap();
+    fs::write(
+        home.path().join("runtime/profile.yaml"),
+        "runtimes:\n  claude:\n    command: profile-claude\n    resume: profile-claude --resume <session-id>\n",
+    )
+    .unwrap();
+
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+    let env_arg = helm_agent_home_arg_for_test(home.path());
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260513-ENV",
+            "--title",
+            "Env wins over runtime profile",
+            "--project",
+            "/repo/project",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
+        .env("HELM_AGENT_CLAUDE_COMMAND", "env-claude")
+        .env(
+            "HELM_AGENT_CLAUDE_RESUME_COMMAND",
+            "env-claude --resume <session-id>",
+        )
+        .args(["task", "dispatch", "PM-20260513-ENV", "--runtime", "claude"])
+        .assert()
+        .success()
+        .stdout(contains("Start:"))
+        .stdout(contains("env-claude"))
+        .stdout(contains("Resume: env-claude --resume <session-id>"));
+
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        format!(
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260513-ENV-claude\n-c\n/repo/project\nenv-claude\n"
+        )
+    );
 }
 
 #[test]

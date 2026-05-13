@@ -1,6 +1,7 @@
 use crate::adapter::RuntimeAdapter;
 use crate::domain::AgentRuntime;
 use crate::paths::HELM_AGENT_HOME_ENV;
+use crate::runtime_profile::RuntimeProfile;
 use anyhow::{bail, Context, Result};
 use std::env;
 use std::path::PathBuf;
@@ -91,6 +92,11 @@ impl Launcher {
         self
     }
 
+    pub fn with_runtime_profile(mut self, profile: &RuntimeProfile) -> Self {
+        self.runtime_commands = RuntimeCommandOverrides::from_profile_and_env(profile);
+        self
+    }
+
     pub fn dry_run(&self, dispatch: &DispatchPlan) -> LaunchPreview {
         let adapter = RuntimeAdapter::for_runtime(dispatch.runtime);
         let runtime_command = self.runtime_command(&adapter);
@@ -99,9 +105,7 @@ impl Launcher {
             task_id = dispatch.task_id,
             runtime = dispatch.runtime.as_str()
         );
-        let resume_command = self
-            .runtime_resume_command(&adapter)
-            .map(ToString::to_string);
+        let resume_command = self.runtime_resume_command(&adapter, runtime_command);
 
         let env_args = self
             .helm_agent_home
@@ -171,14 +175,26 @@ impl Launcher {
             .unwrap_or(adapter.command)
     }
 
-    fn runtime_resume_command<'a>(&'a self, adapter: &'a RuntimeAdapter) -> Option<&'a str> {
-        self.runtime_commands
-            .get_resume(adapter.runtime)
-            .or_else(|| {
-                adapter
-                    .native_resume_available
-                    .then_some(adapter.native_resume_template)
-            })
+    fn runtime_resume_command(
+        &self,
+        adapter: &RuntimeAdapter,
+        runtime_command: &str,
+    ) -> Option<String> {
+        if let Some(resume) = self.runtime_commands.get_resume(adapter.runtime) {
+            return Some(resume.to_string());
+        }
+        if !adapter.native_resume_available {
+            return None;
+        }
+        if runtime_command == adapter.command {
+            return Some(adapter.native_resume_template.to_string());
+        }
+
+        let suffix = adapter
+            .native_resume_template
+            .strip_prefix(adapter.command)
+            .unwrap_or("");
+        Some(format!("{runtime_command}{suffix}"))
     }
 
     pub fn send_keys(&self, session: &str, message: &str) -> Result<()> {
@@ -240,6 +256,56 @@ impl RuntimeCommandOverrides {
         }
     }
 
+    fn from_profile_and_env(profile: &RuntimeProfile) -> Self {
+        let mut runtime_commands = Self::from_profile(profile);
+        runtime_commands.apply_env();
+        runtime_commands
+    }
+
+    fn from_profile(profile: &RuntimeProfile) -> Self {
+        let mut runtime_commands = Self::default();
+        for runtime in [
+            AgentRuntime::Claude,
+            AgentRuntime::Codex,
+            AgentRuntime::OpenCode,
+        ] {
+            if let Some(entry) = profile.entry(runtime) {
+                if let Some(command) = entry.command.clone().and_then(normalize_command_override) {
+                    runtime_commands.set(runtime, command);
+                }
+                if let Some(resume) = entry.resume.clone().and_then(normalize_command_override) {
+                    runtime_commands.set_resume(runtime, resume);
+                }
+            }
+        }
+        runtime_commands
+    }
+
+    fn apply_env(&mut self) {
+        self.overlay(Self::from_env());
+    }
+
+    fn overlay(&mut self, other: Self) {
+        if other.claude.is_some() {
+            self.claude = other.claude;
+        }
+        if other.codex.is_some() {
+            self.codex = other.codex;
+        }
+        if other.opencode.is_some() {
+            self.opencode = other.opencode;
+        }
+        if other.claude_resume.is_some() {
+            self.claude_resume = other.claude_resume;
+        }
+        if other.codex_resume.is_some() {
+            self.codex_resume = other.codex_resume;
+        }
+        if other.opencode_resume.is_some() {
+            self.opencode_resume = other.opencode_resume;
+        }
+    }
+
     fn get(&self, runtime: AgentRuntime) -> Option<&str> {
         match runtime {
             AgentRuntime::Claude => self.claude.as_deref(),
@@ -264,6 +330,16 @@ impl RuntimeCommandOverrides {
             AgentRuntime::Claude => self.claude = command,
             AgentRuntime::Codex => self.codex = command,
             AgentRuntime::OpenCode => self.opencode = command,
+            AgentRuntime::Acp => {}
+        }
+    }
+
+    fn set_resume(&mut self, runtime: AgentRuntime, command: String) {
+        let command = normalize_command_override(command);
+        match runtime {
+            AgentRuntime::Claude => self.claude_resume = command,
+            AgentRuntime::Codex => self.codex_resume = command,
+            AgentRuntime::OpenCode => self.opencode_resume = command,
             AgentRuntime::Acp => {}
         }
     }

@@ -184,7 +184,7 @@ fn dry_run_preview_uses_runtime_command_override() {
     );
     assert_eq!(
         launch.resume_command.as_deref(),
-        Some("claude --resume <session-id>")
+        Some("mc --code --resume <session-id>")
     );
 }
 

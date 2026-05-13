@@ -38,7 +38,29 @@ HELM_AGENT_REAL_RUN_RUNTIME=opencode HELM_AGENT_REAL_RUN_CONFIRM=1 make real-run
 HELM_AGENT_REAL_RUN_RUNTIME=codex HELM_AGENT_REAL_RUN_CONFIRM=1 make real-run-tmux
 ```
 
+If Claude Code is launched through a local wrapper, configure it once before running
+the smoke:
+
+```bash
+helm-agent runtime profile set claude \
+  --command "mc --code" \
+  --resume "mc --code --resume <session-id>"
+helm-agent runtime profile doctor
+```
+
+`make real-run-tmux` copies `runtime/profile.yaml` from your current HelmAgent home
+into its temporary smoke home, so the real child session uses the same wrapper
+without requiring shell exports. Override the source with
+`HELM_AGENT_REAL_RUN_PROFILE_HOME=/path` if needed.
+
 The target starts a child-agent tmux session with `--send-brief`, runs `helm-agent task sync --all`, and prints the review commands. It never accepts the task automatically. Real tmux runs keep their temporary `HELM_AGENT_HOME` and project directory by default so the child session, brief, and review commands keep working.
+
+Before running the printed review commands from a kept smoke run, use the printed
+home:
+
+```bash
+export HELM_AGENT_HOME=/tmp/helm-agent-real-run.xxxxxx
+```
 
 ## 4. Real ACP Agent
 
