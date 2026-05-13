@@ -45,6 +45,20 @@ fn helm_agent_home_arg_for_test(home: &std::path::Path) -> String {
     format!("HELM_AGENT_HOME={}", home.canonicalize().unwrap().display())
 }
 
+#[test]
+fn cli_prints_package_version() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(contains(format!(
+            "helm-agent {}",
+            env!("CARGO_PKG_VERSION")
+        )));
+}
+
 fn fake_tmux_script(path: &Path, record_path: &Path) {
     let record_path = record_path.display().to_string().replace('\'', "'\\''");
     fs::write(

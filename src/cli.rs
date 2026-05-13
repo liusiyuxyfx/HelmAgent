@@ -23,7 +23,7 @@ const CLAUDE_CODE_ACP_PRESET: &str = "claude-code";
 const CLAUDE_CODE_ACP_RESUME_TEMPLATE: &str = "cd {cwd} && claude --resume {session_id}";
 
 #[derive(Debug, Parser)]
-#[command(name = "helm-agent")]
+#[command(name = "helm-agent", version)]
 #[command(about = "HelmAgent local coordinator")]
 pub struct Cli {
     #[command(subcommand)]

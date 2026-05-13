@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.1 - 2026-05-13
+
+### Fixed
+
+- Added `helm-agent --version` so installed binaries can report their package version.
+
 ## v0.1.0 - 2026-05-13
 
 First usable HelmAgent release.
