@@ -128,6 +128,13 @@ fn fake_tmux_doctor_script(path: &Path, record_path: &Path) {
     fs::set_permissions(path, permissions).unwrap();
 }
 
+fn fake_command(path: &Path, body: &str) {
+    fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+    let mut permissions = fs::metadata(path).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(path, permissions).unwrap();
+}
+
 fn fake_acp_agent_script(path: &Path) {
     fs::write(
         path,
@@ -219,6 +226,198 @@ for line in sys.stdin:
     let mut permissions = fs::metadata(path).unwrap().permissions();
     permissions.set_mode(0o755);
     fs::set_permissions(path, permissions).unwrap();
+}
+
+#[test]
+fn top_level_help_lists_doctor_command() {
+    Command::cargo_bin("helm-agent")
+        .unwrap()
+        .arg("--help")
+        .assert()
+        .success()
+        .stdout(contains("doctor"))
+        .stdout(contains("Run HelmAgent installation diagnostics"));
+}
+
+#[test]
+fn top_level_doctor_reports_installation_checks() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    for tool in ["cargo", "git", "rustc"] {
+        fake_command(&bin_dir.join(tool), "exit 0");
+    }
+    fake_command(&bin_dir.join("helm-agent"), "exit 0");
+    fs::write(home.path().join("env"), "export HELM_AGENT_HOME=test\n").unwrap();
+    fs::write(home.path().join("main-agent-template.md"), "@skill\n").unwrap();
+    fs::create_dir_all(home.path().join("skills/helm-agent-coordinator")).unwrap();
+    fs::write(
+        home.path().join("skills/helm-agent-coordinator/SKILL.md"),
+        "---\nname: helm-agent-coordinator\n---\n",
+    )
+    .unwrap();
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_BIN_DIR", &bin_dir)
+        .env("PATH", path)
+        .args(["doctor"])
+        .assert()
+        .success()
+        .stdout(contains("doctor: checking HelmAgent installation"))
+        .stdout(contains("ok: cargo"))
+        .stdout(contains("ok: git"))
+        .stdout(contains("ok: rustc"))
+        .stdout(contains("ok: helm-agent"))
+        .stdout(contains(format!(
+            "ok: HELM_AGENT_HOME {}",
+            home.path().canonicalize().unwrap().display()
+        )))
+        .stdout(contains("ok: env "))
+        .stdout(contains("ok: template "))
+        .stdout(contains("ok: coordinator skill "))
+        .stdout(contains(format!("ok: PATH contains {}", bin_dir.display())))
+        .stdout(contains("ok: helm-agent task board"));
+}
+
+#[test]
+fn top_level_doctor_reports_missing_home_without_creating_it() {
+    let temp = tempdir().unwrap();
+    let home = temp.path().join("missing-home");
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    for tool in ["cargo", "git", "rustc"] {
+        fake_command(&bin_dir.join(tool), "exit 0");
+    }
+    fake_command(&bin_dir.join("helm-agent"), "exit 0");
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    helm_agent_with_home(&home)
+        .env("HELM_AGENT_BIN_DIR", &bin_dir)
+        .env("PATH", path)
+        .args(["doctor"])
+        .assert()
+        .failure()
+        .stdout(contains(format!(
+            "missing: HELM_AGENT_HOME {}",
+            home.display()
+        )))
+        .stdout(contains("missing: env "))
+        .stdout(contains("missing: template "))
+        .stdout(contains("missing: coordinator skill "));
+
+    assert!(!home.exists(), "doctor must not create missing home");
+}
+
+#[test]
+fn top_level_doctor_rejects_existing_relative_home() {
+    let temp = tempdir().unwrap();
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    for tool in ["cargo", "git", "rustc"] {
+        fake_command(&bin_dir.join(tool), "exit 0");
+    }
+    fake_command(&bin_dir.join("helm-agent"), "exit 0");
+    fs::create_dir_all(temp.path().join("relative-home")).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    Command::cargo_bin("helm-agent")
+        .unwrap()
+        .current_dir(temp.path())
+        .env("HELM_AGENT_HOME", "relative-home")
+        .env("HELM_AGENT_BIN_DIR", &bin_dir)
+        .env("PATH", path)
+        .args(["doctor"])
+        .assert()
+        .failure()
+        .stdout(contains(
+            "missing: HELM_AGENT_HOME must be absolute: relative-home",
+        ));
+}
+
+#[test]
+fn top_level_doctor_rejects_symlinked_guidance_files() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    for tool in ["cargo", "git", "rustc"] {
+        fake_command(&bin_dir.join(tool), "exit 0");
+    }
+    fake_command(&bin_dir.join("helm-agent"), "exit 0");
+    fs::write(home.path().join("env"), "export HELM_AGENT_HOME=test\n").unwrap();
+    let real_template = temp.path().join("real-template.md");
+    fs::write(&real_template, "@skill\n").unwrap();
+    symlink(&real_template, home.path().join("main-agent-template.md")).unwrap();
+    fs::create_dir_all(home.path().join("skills/helm-agent-coordinator")).unwrap();
+    fs::write(
+        home.path().join("skills/helm-agent-coordinator/SKILL.md"),
+        "---\nname: helm-agent-coordinator\n---\n",
+    )
+    .unwrap();
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_BIN_DIR", &bin_dir)
+        .env("PATH", path)
+        .args(["doctor"])
+        .assert()
+        .failure()
+        .stdout(contains("failed: template "))
+        .stdout(contains("is a symlink"));
+}
+
+#[test]
+fn top_level_doctor_executes_path_helm_agent_task_board() {
+    let home = tempdir().unwrap();
+    let temp = tempdir().unwrap();
+    let bin_dir = temp.path().join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    for tool in ["cargo", "git", "rustc"] {
+        fake_command(&bin_dir.join(tool), "exit 0");
+    }
+    fake_command(
+        &bin_dir.join("helm-agent"),
+        "printf '%s\\n' 'board failed' >&2\nexit 42",
+    );
+    fs::write(home.path().join("env"), "export HELM_AGENT_HOME=test\n").unwrap();
+    fs::write(home.path().join("main-agent-template.md"), "@skill\n").unwrap();
+    fs::create_dir_all(home.path().join("skills/helm-agent-coordinator")).unwrap();
+    fs::write(
+        home.path().join("skills/helm-agent-coordinator/SKILL.md"),
+        "---\nname: helm-agent-coordinator\n---\n",
+    )
+    .unwrap();
+    let path = format!(
+        "{}:{}",
+        bin_dir.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    helm_agent_with_home(home.path())
+        .env("HELM_AGENT_BIN_DIR", &bin_dir)
+        .env("PATH", path)
+        .args(["doctor"])
+        .assert()
+        .failure()
+        .stdout(contains("failed: helm-agent task board (board failed)"));
 }
 
 #[test]

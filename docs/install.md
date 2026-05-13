@@ -75,6 +75,12 @@ sh ./install.sh doctor
 make doctor
 ```
 
+Installed CLI:
+
+```bash
+helm-agent doctor
+```
+
 Doctor checks:
 
 - `cargo`

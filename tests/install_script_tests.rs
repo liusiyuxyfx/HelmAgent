@@ -408,6 +408,7 @@ fn install_docs_cover_core_lifecycle_commands() {
         "-o \"$INSTALLER\" && sh \"$INSTALLER\" doctor",
         "-o \"$INSTALLER\" && sh \"$INSTALLER\" uninstall",
         "-o \"$INSTALLER\" && sh \"$INSTALLER\" init-project",
+        "helm-agent doctor",
         "helm-agent project init --path /path/to/project --agent all",
         "helm-agent agent prompt --runtime codex",
         "helm-agent board serve --host 127.0.0.1 --port 8765",

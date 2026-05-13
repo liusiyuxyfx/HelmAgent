@@ -83,6 +83,12 @@ make doctor
 make uninstall
 ```
 
+After installation, the installed CLI can run the same diagnostics directly:
+
+```bash
+helm-agent doctor
+```
+
 Plain uninstall keeps `$HOME/.helm-agent` so task records are not deleted by accident.
 Use `make uninstall-purge` or `sh ./install.sh uninstall --purge` only when you
 intentionally want to remove HelmAgent data.

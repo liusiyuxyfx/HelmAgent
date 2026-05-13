@@ -1,6 +1,7 @@
 use crate::acp_adapter::{self, AcpAgentConfig};
 use crate::adapter::RuntimeAdapter;
 use crate::brief;
+use crate::doctor;
 use crate::domain::{AgentRuntime, ReviewState, RiskLevel, TaskEvent, TaskRecord, TaskStatus};
 use crate::guidance::{self, GuidanceFile, GuidanceRuntime};
 use crate::launcher::{DispatchPlan, Launcher};
@@ -31,6 +32,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Run HelmAgent installation diagnostics.
+    Doctor,
     Task(TaskCommand),
     Project(ProjectCommand),
     Agent(AgentCommand),
@@ -472,15 +475,21 @@ impl EventTypeArg {
 
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
-    let store = TaskStore::new(canonical_helm_agent_home()?);
 
     match cli.command {
-        Command::Task(task) => handle_task(task, &store),
-        Command::Project(project) => handle_project(project),
-        Command::Agent(agent) => handle_agent(agent),
-        Command::Board(board) => handle_board(board, &store),
-        Command::Acp(acp) => handle_acp(acp, &store),
-        Command::Runtime(runtime) => handle_runtime(runtime, &store),
+        Command::Doctor => doctor::print_install_doctor(),
+        command => {
+            let store = TaskStore::new(canonical_helm_agent_home()?);
+            match command {
+                Command::Doctor => unreachable!("doctor handled before store initialization"),
+                Command::Task(task) => handle_task(task, &store),
+                Command::Project(project) => handle_project(project),
+                Command::Agent(agent) => handle_agent(agent),
+                Command::Board(board) => handle_board(board, &store),
+                Command::Acp(acp) => handle_acp(acp, &store),
+                Command::Runtime(runtime) => handle_runtime(runtime, &store),
+            }
+        }
     }
 }
 

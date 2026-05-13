@@ -2,6 +2,7 @@ pub mod acp_adapter;
 pub mod adapter;
 pub mod brief;
 pub mod cli;
+pub mod doctor;
 pub mod domain;
 pub mod guidance;
 pub mod launcher;

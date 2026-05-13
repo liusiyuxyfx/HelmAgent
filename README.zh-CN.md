@@ -77,6 +77,12 @@ make doctor
 make uninstall
 ```
 
+安装完成后，也可以直接用已安装的 CLI 做同等诊断：
+
+```bash
+helm-agent doctor
+```
+
 普通卸载会保留 `$HOME/.helm-agent`，避免误删任务记录。只有在你明确希望删除 HelmAgent 数据时，才使用 `make uninstall-purge` 或 `sh ./install.sh uninstall --purge`。
 
 更多 dry-run、purge 安全检查、旧版 `init-project` 和环境变量说明见 [docs/install.md](docs/install.md)。
