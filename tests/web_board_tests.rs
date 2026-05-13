@@ -55,6 +55,11 @@ fn interactive_board_html_contains_action_token_and_app_controls() {
     assert!(html.contains("detail-review"), "{html}");
     assert!(html.contains("detail-brief"), "{html}");
     assert!(html.contains("detail-resume"), "{html}");
+    assert!(html.contains("Copy Brief"), "{html}");
+    assert!(html.contains("Copy Resume"), "{html}");
+    assert!(html.contains("copyDetailText('detail-brief'"), "{html}");
+    assert!(html.contains("copyDetailText('detail-resume'"), "{html}");
+    assert!(html.contains("navigator.clipboard.writeText"), "{html}");
     assert!(html.contains("eventsEl.replaceChildren();"), "{html}");
     assert!(html.contains("if (id !== selectedId) return;"), "{html}");
 }

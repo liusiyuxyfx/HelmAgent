@@ -151,7 +151,13 @@ h1 { margin: 0; font-size: 1.15rem; line-height: 1.2; letter-spacing: 0; }
 }
 .detail h2 { margin: 0; font-size: 1rem; letter-spacing: 0; }
 .field { display: grid; gap: 0.25rem; }
+.field-heading { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
 .field label { color: var(--muted); font-size: 0.78rem; }
+.field button {
+  min-height: 1.6rem;
+  padding: 0.18rem 0.45rem;
+  font-size: 0.75rem;
+}
 .field div { overflow-wrap: anywhere; }
 .actions { display: grid; gap: 0.6rem; }
 .action-row { display: grid; grid-template-columns: 1fr auto; gap: 0.45rem; }
@@ -211,8 +217,14 @@ summary { cursor: pointer; color: var(--muted); }
     <div class="field"><label>Review</label><div id="detail-review">-</div></div>
     <div class="field"><label>Last</label><div id="detail-last">-</div></div>
     <div class="field"><label>Next</label><div id="detail-next">-</div></div>
-    <div class="field"><label>Brief</label><div id="detail-brief">-</div></div>
-    <div class="field"><label>Resume</label><div id="detail-resume">-</div></div>
+    <div class="field">
+      <div class="field-heading"><label>Brief</label><button id="copy-brief-button" type="button">Copy Brief</button></div>
+      <div id="detail-brief">-</div>
+    </div>
+    <div class="field">
+      <div class="field-heading"><label>Resume</label><button id="copy-resume-button" type="button">Copy Resume</button></div>
+      <div id="detail-resume">-</div>
+    </div>
     <div class="actions">
       <div class="action-row">
         <input id="event-message" placeholder="Progress message">
@@ -368,6 +380,8 @@ function renderDetail() {
   const task = selectedTask();
   const eventsEl = document.getElementById('events');
   document.querySelectorAll('.actions button, .actions input').forEach(el => { el.disabled = !task; });
+  document.getElementById('copy-brief-button').disabled = !task || !task.recovery.brief_path;
+  document.getElementById('copy-resume-button').disabled = !task || !task.recovery.resume_command;
   document.getElementById('detail-title').textContent = task ? task.title : 'Select a task';
   document.getElementById('detail-id').textContent = task ? task.id : '-';
   document.getElementById('detail-project').textContent = task ? task.project.path : '-';
@@ -416,7 +430,39 @@ async function mutate(path, body) {
   }
 }
 
+async function copyDetailText(elementId) {
+  const value = document.getElementById(elementId).textContent;
+  if (!value || value === '-') return;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+    } else {
+      const textarea = document.createElement('textarea');
+      try {
+        textarea.value = value;
+        textarea.setAttribute('readonly', '');
+        textarea.style.position = 'fixed';
+        textarea.style.left = '-9999px';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        textarea.setSelectionRange(0, textarea.value.length);
+        if (!document.execCommand('copy')) {
+          throw new Error('copy command rejected');
+        }
+      } finally {
+        textarea.remove();
+      }
+    }
+    statusEl.textContent = 'Copied';
+  } catch (error) {
+    statusEl.textContent = `Copy failed: ${error.message}`;
+  }
+}
+
 document.getElementById('refresh-button').addEventListener('click', loadTasks);
+document.getElementById('copy-brief-button').addEventListener('click', () => copyDetailText('detail-brief'));
+document.getElementById('copy-resume-button').addEventListener('click', () => copyDetailText('detail-resume'));
 document.querySelectorAll('[data-status-filter]').forEach(button => {
   button.addEventListener('click', () => {
     showStatus = button.dataset.statusFilter;
