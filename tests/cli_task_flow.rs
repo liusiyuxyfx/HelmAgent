@@ -413,6 +413,64 @@ fn acp_agent_add_list_and_remove_round_trip() {
 }
 
 #[test]
+fn acp_agent_add_persists_human_resume_template() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "custom-claude",
+            "--command",
+            "npx",
+            "--arg",
+            "-y",
+            "--arg",
+            "@zed-industries/claude-agent-acp",
+            "--env",
+            "CLAUDE_CODE_EXECUTABLE=/tmp/claude-wrapper",
+            "--resume-template",
+            "cd {cwd} && claude-wrapper --resume {session_id}",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Added ACP agent custom-claude"));
+
+    let config = fs::read_to_string(home.path().join("acp").join("agents.yaml")).unwrap();
+    assert!(
+        config.contains("resume_template: cd {cwd} && claude-wrapper --resume {session_id}"),
+        "{config}"
+    );
+}
+
+#[test]
+fn acp_preset_install_claude_code_registers_agent() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["acp", "preset", "install", "claude-code"])
+        .assert()
+        .success()
+        .stdout(contains("Installed ACP preset claude-code"))
+        .stdout(contains("Agent: claude-code"))
+        .stdout(contains("Command: npx -y @zed-industries/claude-agent-acp"));
+
+    let config = fs::read_to_string(home.path().join("acp").join("agents.yaml")).unwrap();
+    assert!(config.contains("claude-code:"), "{config}");
+    assert!(config.contains("command: npx"), "{config}");
+    assert!(config.contains("- -y"), "{config}");
+    assert!(
+        config.contains("- '@zed-industries/claude-agent-acp'"),
+        "{config}"
+    );
+    assert!(
+        config.contains("resume_template: cd {cwd} && claude --resume {session_id}"),
+        "{config}"
+    );
+}
+
+#[test]
 fn acp_agent_add_rejects_invalid_env_pair() {
     let home = tempdir().unwrap();
 
@@ -706,6 +764,94 @@ fn acp_real_dispatch_sends_brief_to_fake_agent_and_records_session() {
     assert!(events
         .iter()
         .any(|event| event.event_type == "acp_dispatch_completed"));
+}
+
+#[test]
+fn acp_real_dispatch_records_human_tui_resume_command() {
+    let home = tempdir().unwrap();
+    let project_root = tempdir().unwrap();
+    let project = project_root.path().join("project with spaces");
+    fs::create_dir(&project).unwrap();
+    let fake_agent = home.path().join("fake-acp-agent.py");
+    fake_acp_agent_script(&fake_agent);
+    let expected_resume = format!(
+        "cd {} && claude --resume fake-acp-session-1",
+        shell_quote_for_test(&project.display().to_string())
+    );
+
+    helm_agent_with_home(home.path())
+        .args([
+            "acp",
+            "agent",
+            "add",
+            "fake",
+            "--command",
+            fake_agent.to_str().unwrap(),
+            "--resume-template",
+            "cd {cwd} && claude --resume {session_id}",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "create",
+            "--id",
+            "PM-20260513-ACP-HANDOFF",
+            "--title",
+            "ACP human handoff",
+            "--project",
+            project.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "task",
+            "dispatch",
+            "PM-20260513-ACP-HANDOFF",
+            "--runtime",
+            "acp",
+            "--agent",
+            "fake",
+            "--confirm",
+        ])
+        .assert()
+        .success()
+        .stdout(contains("Completed ACP PM-20260513-ACP-HANDOFF"))
+        .stdout(contains("Session: fake-acp-session-1"))
+        .stdout(contains(format!("Resume: {expected_resume}")));
+
+    let store = TaskStore::new(home.path().to_path_buf());
+    let task = store.load_task("PM-20260513-ACP-HANDOFF").unwrap();
+    assert_eq!(
+        task.recovery.resume_command.as_deref(),
+        Some(expected_resume.as_str())
+    );
+
+    let brief = fs::read_to_string(
+        home.path()
+            .join("sessions/PM-20260513-ACP-HANDOFF/brief.md"),
+    )
+    .unwrap();
+    assert!(
+        brief.contains(&format!("Resume: {expected_resume}")),
+        "{brief}"
+    );
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260513-ACP-HANDOFF"])
+        .assert()
+        .success()
+        .stdout(contains(format!("Resume: {expected_resume}")));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "resume", "PM-20260513-ACP-HANDOFF"])
+        .assert()
+        .success()
+        .stdout(contains(format!("Resume: {expected_resume}")));
 }
 
 #[test]
@@ -1823,25 +1969,25 @@ fn dispatch_respects_runtime_command_env_override() {
 
     helm_agent_with_home(home.path())
         .env("HELM_AGENT_TMUX_BIN", &tmux_bin)
-        .env("HELM_AGENT_CLAUDE_COMMAND", "mc --code")
+        .env("HELM_AGENT_CLAUDE_COMMAND", "claude-wrapper --workspace")
         .env(
             "HELM_AGENT_CLAUDE_RESUME_COMMAND",
-            "mc --code --resume <session-id>",
+            "claude-wrapper --resume <session-id>",
         )
         .args(["task", "dispatch", "PM-20260512-CMD", "--runtime", "claude"])
         .assert()
         .success()
         .stdout(contains("Started PM-20260512-CMD"))
         .stdout(contains(format!(
-            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'",
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'claude-wrapper --workspace'",
             shell_quote_for_test(&env_arg)
         )))
-        .stdout(contains("Resume: mc --code --resume <session-id>"));
+        .stdout(contains("Resume: claude-wrapper --resume <session-id>"));
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
         format!(
-            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260512-CMD-claude\n-c\n/repo/project\nmc --code\n"
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260512-CMD-claude\n-c\n/repo/project\nclaude-wrapper --workspace\n"
         )
     );
 
@@ -1850,7 +1996,7 @@ fn dispatch_respects_runtime_command_env_override() {
     assert_eq!(task.progress.last_event, "Dispatch started");
     assert_eq!(
         task.recovery.resume_command.as_deref(),
-        Some("mc --code --resume <session-id>")
+        Some("claude-wrapper --resume <session-id>")
     );
     let events = store.read_events("PM-20260512-CMD").unwrap();
     assert!(events.iter().any(|event| {
@@ -1858,7 +2004,7 @@ fn dispatch_respects_runtime_command_env_override() {
             && event
                 .message
                 .contains(&format!(
-                    "tmux new-session -d -e {} -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'",
+                    "tmux new-session -d -e {} -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'claude-wrapper --workspace'",
                     shell_quote_for_test(&env_arg)
                 ))
     }));
@@ -1875,21 +2021,26 @@ fn runtime_profile_set_persists_and_doctor_reports_effective_command() {
             "set",
             "claude",
             "--command",
-            "mc --code",
+            "claude-wrapper --workspace",
             "--resume",
-            "mc --code --resume <session-id>",
+            "claude-wrapper --resume <session-id>",
         ])
         .assert()
         .success()
         .stdout(contains("Saved runtime profile"))
-        .stdout(contains("claude command: mc --code"))
-        .stdout(contains("claude resume: mc --code --resume <session-id>"));
+        .stdout(contains("claude command: claude-wrapper --workspace"))
+        .stdout(contains(
+            "claude resume: claude-wrapper --resume <session-id>",
+        ));
 
     let profile = fs::read_to_string(home.path().join("runtime/profile.yaml")).unwrap();
     assert!(profile.contains("claude:"), "{profile}");
-    assert!(profile.contains("command: mc --code"), "{profile}");
     assert!(
-        profile.contains("resume: mc --code --resume <session-id>"),
+        profile.contains("command: claude-wrapper --workspace"),
+        "{profile}"
+    );
+    assert!(
+        profile.contains("resume: claude-wrapper --resume <session-id>"),
         "{profile}"
     );
 
@@ -1898,9 +2049,11 @@ fn runtime_profile_set_persists_and_doctor_reports_effective_command() {
         .assert()
         .success()
         .stdout(contains("Runtime profile:"))
-        .stdout(contains("claude command: mc --code (profile)"))
         .stdout(contains(
-            "claude resume: mc --code --resume <session-id> (profile)",
+            "claude command: claude-wrapper --workspace (profile)",
+        ))
+        .stdout(contains(
+            "claude resume: claude-wrapper --resume <session-id> (profile)",
         ));
 }
 
@@ -1963,7 +2116,7 @@ fn dispatch_derives_resume_command_from_profile_command_when_resume_is_absent() 
     fs::create_dir_all(home.path().join("runtime")).unwrap();
     fs::write(
         home.path().join("runtime/profile.yaml"),
-        "runtimes:\n  claude:\n    command: mc --code\n",
+        "runtimes:\n  claude:\n    command: claude-wrapper --workspace\n",
     )
     .unwrap();
 
@@ -1997,13 +2150,15 @@ fn dispatch_derives_resume_command_from_profile_command_when_resume_is_absent() 
         ])
         .assert()
         .success()
-        .stdout(contains("Resume: mc --code --resume <session-id>"));
+        .stdout(contains(
+            "Resume: claude-wrapper --workspace --resume <session-id>",
+        ));
 
     let store = TaskStore::new(home.path().to_path_buf());
     let task = store.load_task("PM-20260513-DERIVED").unwrap();
     assert_eq!(
         task.recovery.resume_command.as_deref(),
-        Some("mc --code --resume <session-id>")
+        Some("claude-wrapper --workspace --resume <session-id>")
     );
 }
 
@@ -2013,7 +2168,7 @@ fn dispatch_uses_runtime_profile_command_when_env_override_absent() {
     fs::create_dir_all(home.path().join("runtime")).unwrap();
     fs::write(
         home.path().join("runtime/profile.yaml"),
-        "runtimes:\n  claude:\n    command: mc --code\n    resume: mc --code --resume <session-id>\n",
+        "runtimes:\n  claude:\n    command: claude-wrapper --workspace\n    resume: claude-wrapper --resume <session-id>\n",
     )
     .unwrap();
 
@@ -2050,15 +2205,15 @@ fn dispatch_uses_runtime_profile_command_when_env_override_absent() {
         .success()
         .stdout(contains("Started PM-20260513-PROFILE"))
         .stdout(contains(format!(
-            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260513-PROFILE-claude -c /repo/project 'mc --code'",
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260513-PROFILE-claude -c /repo/project 'claude-wrapper --workspace'",
             shell_quote_for_test(&env_arg)
         )))
-        .stdout(contains("Resume: mc --code --resume <session-id>"));
+        .stdout(contains("Resume: claude-wrapper --resume <session-id>"));
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
         format!(
-            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260513-PROFILE-claude\n-c\n/repo/project\nmc --code\n"
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260513-PROFILE-claude\n-c\n/repo/project\nclaude-wrapper --workspace\n"
         )
     );
 
@@ -2066,7 +2221,7 @@ fn dispatch_uses_runtime_profile_command_when_env_override_absent() {
     let task = store.load_task("PM-20260513-PROFILE").unwrap();
     assert_eq!(
         task.recovery.resume_command.as_deref(),
-        Some("mc --code --resume <session-id>")
+        Some("claude-wrapper --resume <session-id>")
     );
 }
 

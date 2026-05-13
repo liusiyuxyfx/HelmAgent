@@ -18,6 +18,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use time::OffsetDateTime;
 
+const CLAUDE_CODE_ACP_PRESET: &str = "claude-code";
+const CLAUDE_CODE_ACP_RESUME_TEMPLATE: &str = "cd {cwd} && claude --resume {session_id}";
+
 #[derive(Debug, Parser)]
 #[command(name = "helm-agent")]
 #[command(about = "HelmAgent local coordinator")]
@@ -45,6 +48,7 @@ struct AcpCommand {
 #[derive(Debug, Subcommand)]
 enum AcpSubcommand {
     Agent(AcpAgentCommand),
+    Preset(AcpPresetCommand),
 }
 
 #[derive(Debug, Args)]
@@ -66,10 +70,12 @@ struct AcpAgentAddArgs {
     name: String,
     #[arg(long)]
     command: PathBuf,
-    #[arg(long = "arg")]
+    #[arg(long = "arg", allow_hyphen_values = true)]
     args: Vec<String>,
     #[arg(long = "env")]
     env: Vec<String>,
+    #[arg(long = "resume-template")]
+    resume_template: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -80,6 +86,22 @@ struct AcpAgentCheckArgs {
 #[derive(Debug, Args)]
 struct AcpAgentRemoveArgs {
     name: String,
+}
+
+#[derive(Debug, Args)]
+struct AcpPresetCommand {
+    #[command(subcommand)]
+    command: AcpPresetSubcommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum AcpPresetSubcommand {
+    Install(AcpPresetInstallArgs),
+}
+
+#[derive(Debug, Args)]
+struct AcpPresetInstallArgs {
+    preset: String,
 }
 
 #[derive(Debug, Args)]
@@ -757,6 +779,7 @@ fn handle_acp(acp: AcpCommand, store: &TaskStore) -> Result<()> {
                         command: args.command,
                         args: args.args,
                         env,
+                        resume_template: args.resume_template,
                     },
                 )?;
                 println!("Added ACP agent {}", args.name);
@@ -819,7 +842,39 @@ fn handle_acp(acp: AcpCommand, store: &TaskStore) -> Result<()> {
                 Ok(())
             }
         },
+        AcpSubcommand::Preset(preset) => handle_acp_preset(preset, store),
     }
+}
+
+fn handle_acp_preset(preset: AcpPresetCommand, store: &TaskStore) -> Result<()> {
+    match preset.command {
+        AcpPresetSubcommand::Install(args) => match args.preset.as_str() {
+            CLAUDE_CODE_ACP_PRESET => install_claude_code_acp_preset(store),
+            other => bail!("unknown ACP preset: {other}"),
+        },
+    }
+}
+
+fn install_claude_code_acp_preset(store: &TaskStore) -> Result<()> {
+    acp_adapter::add_acp_agent(
+        store,
+        CLAUDE_CODE_ACP_PRESET,
+        AcpAgentConfig {
+            command: PathBuf::from("npx"),
+            args: vec![
+                "-y".to_string(),
+                "@zed-industries/claude-agent-acp".to_string(),
+            ],
+            env: std::collections::BTreeMap::new(),
+            resume_template: Some(CLAUDE_CODE_ACP_RESUME_TEMPLATE.to_string()),
+        },
+    )?;
+
+    println!("Installed ACP preset {CLAUDE_CODE_ACP_PRESET}");
+    println!("Agent: {CLAUDE_CODE_ACP_PRESET}");
+    println!("Command: npx -y @zed-industries/claude-agent-acp");
+    println!("Resume: {CLAUDE_CODE_ACP_RESUME_TEMPLATE}");
+    Ok(())
 }
 
 fn handle_project(project: ProjectCommand) -> Result<()> {
@@ -1028,7 +1083,12 @@ fn handle_acp_task_dispatch(
             completed_task.assignment.tmux_session = None;
             completed_task.assignment.acp_session_id = Some(result.session_id.clone());
             completed_task.recovery.attach_command = None;
-            completed_task.recovery.resume_command = task.recovery.resume_command.clone();
+            completed_task.recovery.resume_command = acp_adapter::render_resume_command(
+                &agent,
+                &completed_task.project.path,
+                &result.session_id,
+            )
+            .or_else(|| task.recovery.resume_command.clone());
             completed_task.recovery.brief_path = Some(store.brief_path(&completed_task.id));
             if !matches!(
                 completed_task.status,
@@ -1060,6 +1120,8 @@ fn handle_acp_task_dispatch(
                     retry_task.status = TaskStatus::NeedsChanges;
                     retry_task.assignment.runtime = Some(AgentRuntime::Acp);
                     retry_task.assignment.acp_session_id = Some(result.session_id.clone());
+                    retry_task.recovery.resume_command =
+                        completed_task.recovery.resume_command.clone();
                     retry_task.review.state = ReviewState::ChangesRequested;
                     retry_task.review.reason = Some(warning.clone());
                     retry_task.progress.last_event = warning.clone();
@@ -1083,6 +1145,8 @@ fn handle_acp_task_dispatch(
                     retry_task.status = TaskStatus::NeedsChanges;
                     retry_task.assignment.runtime = Some(AgentRuntime::Acp);
                     retry_task.assignment.acp_session_id = Some(result.session_id.clone());
+                    retry_task.recovery.resume_command =
+                        completed_task.recovery.resume_command.clone();
                     retry_task.review.state = ReviewState::ChangesRequested;
                     retry_task.review.reason = Some(warning.clone());
                     retry_task.progress.last_event = warning.clone();
@@ -1107,6 +1171,14 @@ fn handle_acp_task_dispatch(
             println!("Agent: {agent_name}");
             println!("Command: {command}");
             println!("Session: {}", result.session_id);
+            println!(
+                "Resume: {}",
+                completed_task
+                    .recovery
+                    .resume_command
+                    .as_deref()
+                    .unwrap_or("No ACP resume command recorded")
+            );
             println!("Brief: {}", store.brief_path(&args.id).display());
             Ok(())
         }

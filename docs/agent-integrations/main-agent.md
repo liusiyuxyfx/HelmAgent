@@ -27,12 +27,12 @@ helm-agent agent prompt --runtime opencode
 ```
 
 If a runtime uses a local wrapper command, prefer the persistent runtime profile.
-For example, when Claude Code is launched as `mc --code`:
+For example, when Claude Code is launched as `/path/to/custom-claude`:
 
 ```bash
 helm-agent runtime profile set claude \
-  --command "mc --code" \
-  --resume "mc --code --resume <session-id>"
+  --command "/path/to/custom-claude" \
+  --resume "/path/to/custom-claude --resume <session-id>"
 ```
 
 Environment variables such as `HELM_AGENT_CLAUDE_COMMAND` are optional one-shot
@@ -166,8 +166,8 @@ before real dispatch:
 
 ```bash
 helm-agent runtime profile set claude \
-  --command "mc --code" \
-  --resume "mc --code --resume <session-id>"
+  --command "/path/to/custom-claude" \
+  --resume "/path/to/custom-claude --resume <session-id>"
 ```
 
 Use `HELM_AGENT_CLAUDE_COMMAND`, `HELM_AGENT_CODEX_COMMAND`, or

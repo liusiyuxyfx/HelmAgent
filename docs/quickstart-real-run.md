@@ -43,8 +43,8 @@ the smoke:
 
 ```bash
 helm-agent runtime profile set claude \
-  --command "mc --code" \
-  --resume "mc --code --resume <session-id>"
+  --command "/path/to/custom-claude" \
+  --resume "/path/to/custom-claude --resume <session-id>"
 helm-agent runtime profile doctor
 ```
 
@@ -65,6 +65,17 @@ export HELM_AGENT_HOME=/tmp/helm-agent-real-run.xxxxxx
 ## 4. Real ACP Agent
 
 If you have an ACP-compatible stdio agent, register or reuse it, then run the ACP smoke path.
+
+For Claude Code, install and verify the preset first:
+
+```bash
+helm-agent acp preset install claude-code
+helm-agent acp agent check claude-code
+HELM_AGENT_REAL_RUN_CONFIRM=1 \
+HELM_AGENT_REAL_RUN_HOME="$HELM_AGENT_HOME" \
+HELM_AGENT_REAL_RUN_ACP_NAME=claude-code \
+make real-run-acp
+```
 
 Register in the smoke run:
 
@@ -90,6 +101,15 @@ HELM_AGENT_REAL_RUN_CONFIRM=1 HELM_AGENT_REAL_RUN_HOME="$HELM_AGENT_HOME" HELM_A
 ```
 
 The ACP path runs `helm-agent acp agent check` before dispatch and requires `HELM_AGENT_REAL_RUN_CONFIRM=1`. If the check fails, fix the ACP command before sending real work. Real ACP runs keep their temporary state by default for review.
+
+When the ACP agent is registered with a resume template, `helm-agent task status <id>`
+and `helm-agent task resume <id>` print the concrete human TUI command, for example:
+
+```bash
+cd /path/to/project && claude --resume 174041b8-784e-4e7a-82a6-b0c0c06d6193
+```
+
+Run that command in a terminal to inspect or continue the same child-agent conversation.
 
 ## 5. Review Gate
 

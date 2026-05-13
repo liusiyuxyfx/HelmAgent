@@ -19,15 +19,29 @@ pub fn task_status(task: &TaskRecord, events: &[TaskEvent]) -> String {
         .as_deref()
         .map(|path| format!("Brief: {}\n", path.display()))
         .unwrap_or_default();
+    let attach = task
+        .recovery
+        .attach_command
+        .as_deref()
+        .map(|command| format!("Attach: {command}\n"))
+        .unwrap_or_default();
+    let resume = task
+        .recovery
+        .resume_command
+        .as_deref()
+        .map(|command| format!("Resume: {command}\n"))
+        .unwrap_or_default();
 
     format!(
-        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n{brief}{review}",
+        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n{attach}{resume}{brief}{review}",
         id = task.id,
         status = task.status.as_str(),
         title = task.title,
         project = task.project.path.display(),
         progress = last_event,
         next = task.progress.next_action,
+        attach = attach,
+        resume = resume,
         brief = brief,
         review = review,
     )
@@ -52,7 +66,7 @@ pub fn resume_text(task: &TaskRecord) -> String {
     }
 
     output.push_str(
-        "Note: tmux attach is the reliable recovery path. Native resume commands may require replacing <session-id> after the child agent records one.\n",
+        "Note: tmux attach is the reliable recovery path for tmux runtimes. For ACP handoff, run Resume from the recorded project directory.\n",
     );
     output
 }

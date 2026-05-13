@@ -37,6 +37,7 @@ attention.
 - `$HOME/.cargo/bin` on `PATH`.
 - `tmux` for tmux-backed child-agent dispatch.
 - ACP-compatible agent executable only if you want to use `--runtime acp`.
+- Node.js/npm only if you use the bundled Claude Code ACP preset through `npx`.
 
 ## Install
 
@@ -151,6 +152,32 @@ helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --dry-r
 helm-agent task dispatch PM-20260511-001 --runtime acp --agent local-acp --confirm
 ```
 
+For Claude Code, install the built-in ACP preset:
+
+```bash
+helm-agent acp preset install claude-code
+helm-agent acp agent check claude-code
+helm-agent task dispatch PM-20260511-001 --runtime acp --agent claude-code --confirm
+```
+
+The preset registers `npx -y @zed-industries/claude-agent-acp` and records this
+human TUI handoff template:
+
+```bash
+cd {cwd} && claude --resume {session_id}
+```
+
+After an ACP dispatch completes, `task status`, `task resume`, the task board, and
+the generated brief show the concrete resume command, such as:
+
+```bash
+cd /path/to/project && claude --resume 174041b8-784e-4e7a-82a6-b0c0c06d6193
+```
+
+Run that command in a terminal when a human needs to enter the same child-agent
+conversation. Custom ACP registrations can opt into the same behavior with
+`--resume-template "cd {cwd} && /path/to/custom-claude --resume {session_id}"`.
+
 Use `acp agent check` before real task dispatch to verify the configured stdio
 handshake. ACP dispatch records the ACP session id and moves the task to
 `ready_for_review` after the handoff completes. Failed or timed-out ACP dispatches
@@ -220,8 +247,8 @@ Useful environment variables:
 export HELM_AGENT_HOME="$HOME/.helm-agent"
 export HELM_AGENT_TMUX_BIN=tmux
 export HELM_AGENT_ACP_TIMEOUT_MS=300000
-export HELM_AGENT_CLAUDE_COMMAND="mc --code"
-export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+export HELM_AGENT_CLAUDE_COMMAND=claude
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="claude --resume <session-id>"
 export HELM_AGENT_CODEX_COMMAND=codex
 export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
 export HELM_AGENT_OPENCODE_COMMAND=opencode
@@ -234,8 +261,8 @@ For persistent local configuration, prefer the runtime profile:
 
 ```bash
 helm-agent runtime profile set claude \
-  --command "mc --code" \
-  --resume "mc --code --resume <session-id>"
+  --command "claude" \
+  --resume "claude --resume <session-id>"
 
 helm-agent runtime profile doctor
 helm-agent runtime doctor

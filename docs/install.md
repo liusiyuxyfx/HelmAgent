@@ -140,6 +140,50 @@ Installer `init-project` defaults to `--agent all`.
 
 If the template has not been installed yet, both project setup paths install or bootstrap it first. They only modify `$HOME/.helm-agent` and the project you pass. They do not touch global Claude Code or Codex configuration.
 
+## Optional Claude Code ACP Preset
+
+If you use Claude Code through ACP, install HelmAgent's standard ACP preset after
+the CLI is installed:
+
+```bash
+helm-agent acp preset install claude-code
+```
+
+The preset writes:
+
+```text
+$HELM_AGENT_HOME/acp/agents.yaml
+```
+
+The ACP registration runs `npx -y @zed-industries/claude-agent-acp` and stores the
+human handoff template:
+
+```bash
+cd {cwd} && claude --resume {session_id}
+```
+
+If your environment uses a custom Claude Code wrapper, register it as a custom ACP
+agent instead of changing the built-in preset:
+
+```bash
+helm-agent acp agent add custom-claude \
+  --command npx \
+  --arg -y \
+  --arg @zed-industries/claude-agent-acp \
+  --env CLAUDE_CODE_EXECUTABLE=/path/to/custom-claude \
+  --resume-template "cd {cwd} && /path/to/custom-claude --resume {session_id}"
+```
+
+Verify the ACP bridge before dispatching real work:
+
+```bash
+helm-agent acp agent check claude-code
+```
+
+After `helm-agent task dispatch <id> --runtime acp --agent claude-code --confirm`,
+use `helm-agent task resume <id>` to print the concrete TUI command for the same ACP
+session.
+
 ## Dry Run
 
 Every mutating command supports `--dry-run`:
@@ -186,22 +230,22 @@ Dispatch-time runtime overrides:
 
 ```bash
 helm-agent runtime profile set claude \
-  --command "mc --code" \
-  --resume "mc --code --resume <session-id>"
+  --command "/path/to/custom-claude" \
+  --resume "/path/to/custom-claude --resume <session-id>"
 
 helm-agent runtime profile doctor
 helm-agent runtime doctor
 ```
 
 If no profile or environment override is configured, `--runtime claude` launches
-`claude`. Use the runtime profile for persistent local wrapper commands, such as
-`mc --code` for Claude Code.
+`claude`. Use the runtime profile for persistent local wrapper commands when your
+workspace needs one.
 
 One-shot dispatch overrides:
 
 ```bash
-export HELM_AGENT_CLAUDE_COMMAND="mc --code"
-export HELM_AGENT_CLAUDE_RESUME_COMMAND="mc --code --resume <session-id>"
+export HELM_AGENT_CLAUDE_COMMAND="/path/to/custom-claude"
+export HELM_AGENT_CLAUDE_RESUME_COMMAND="/path/to/custom-claude --resume <session-id>"
 export HELM_AGENT_CODEX_COMMAND=codex
 export HELM_AGENT_CODEX_RESUME_COMMAND="codex resume <session-id> --all"
 export HELM_AGENT_OPENCODE_COMMAND=opencode

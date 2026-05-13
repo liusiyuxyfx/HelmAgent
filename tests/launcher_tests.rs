@@ -174,17 +174,17 @@ fn dry_run_preview_uses_runtime_command_override() {
     let launcher = Launcher::with_runtime_command_override(
         PathBuf::from("tmux"),
         AgentRuntime::Claude,
-        "mc --code".to_string(),
+        "claude-wrapper --workspace".to_string(),
     );
     let launch = launcher.dry_run(&dispatch);
 
     assert_eq!(
         launch.start_command,
-        "tmux new-session -d -s helm-agent-PM-20260512-OVERRIDE-claude -c /repo/project 'mc --code'"
+        "tmux new-session -d -s helm-agent-PM-20260512-OVERRIDE-claude -c /repo/project 'claude-wrapper --workspace'"
     );
     assert_eq!(
         launch.resume_command.as_deref(),
-        Some("mc --code --resume <session-id>")
+        Some("claude-wrapper --workspace --resume <session-id>")
     );
 }
 
@@ -278,14 +278,14 @@ fn launch_passes_runtime_command_override_to_tmux() {
     let launcher = Launcher::with_runtime_command_override(
         tmux_bin,
         AgentRuntime::Claude,
-        "mc --code".to_string(),
+        "claude-wrapper --workspace".to_string(),
     );
 
     launcher.launch(&dispatch).unwrap();
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
-        "new-session\n-d\n-s\nhelm-agent-PM-20260512-OVERRIDE-LAUNCH-claude\n-c\n/repo/project\nmc --code\n"
+        "new-session\n-d\n-s\nhelm-agent-PM-20260512-OVERRIDE-LAUNCH-claude\n-c\n/repo/project\nclaude-wrapper --workspace\n"
     );
 }
 

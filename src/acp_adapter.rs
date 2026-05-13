@@ -27,6 +27,8 @@ pub struct AcpAgentConfig {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resume_template: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -71,6 +73,9 @@ pub fn add_acp_agent(store: &TaskStore, name: &str, config: AcpAgentConfig) -> R
     validate_agent_name(name)?;
     if config.command.as_os_str().is_empty() {
         bail!("ACP agent command cannot be empty");
+    }
+    if let Some(template) = config.resume_template.as_deref() {
+        validate_resume_template(template)?;
     }
 
     let mut agents = load_acp_agents(store)?;
@@ -117,6 +122,19 @@ pub fn format_agent_command(config: &AcpAgentConfig) -> String {
         .chain(config.args.iter().map(|arg| shell_quote(arg)))
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+pub fn render_resume_command(
+    config: &AcpAgentConfig,
+    cwd: &Path,
+    session_id: &str,
+) -> Option<String> {
+    let template = config.resume_template.as_deref()?;
+    Some(
+        template
+            .replace("{cwd}", &shell_quote(&cwd.display().to_string()))
+            .replace("{session_id}", &shell_quote(session_id)),
+    )
 }
 
 pub fn is_successful_stop_reason(stop_reason: &str) -> bool {
@@ -333,6 +351,16 @@ fn validate_agent_name(name: &str) -> Result<()> {
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
     {
         bail!("ACP agent name may only contain ASCII letters, digits, '-', '_', or '.'");
+    }
+    Ok(())
+}
+
+fn validate_resume_template(template: &str) -> Result<()> {
+    if !template.contains("{session_id}") {
+        bail!("ACP resume template must contain {{session_id}}");
+    }
+    if !template.contains("{cwd}") {
+        bail!("ACP resume template must contain {{cwd}}");
     }
     Ok(())
 }

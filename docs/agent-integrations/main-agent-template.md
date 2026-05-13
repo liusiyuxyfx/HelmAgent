@@ -32,8 +32,8 @@ helm-agent task triage PM-YYYYMMDD-001 --risk low --priority normal --runtime cl
 
 ```bash
 helm-agent runtime profile set claude \
-  --command "mc --code" \
-  --resume "mc --code --resume <session-id>"
+  --command "/path/to/custom-claude" \
+  --resume "/path/to/custom-claude --resume <session-id>"
 ```
 
 - Environment variables such as `HELM_AGENT_CLAUDE_COMMAND` are optional one-shot overrides and take precedence over the profile.
