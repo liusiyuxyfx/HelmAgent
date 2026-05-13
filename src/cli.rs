@@ -925,7 +925,7 @@ fn handle_task(task: TaskCommand, store: &TaskStore) -> Result<()> {
                 );
             }
 
-            let launcher = Launcher::new();
+            let launcher = Launcher::new().with_helm_agent_home(store.root().display().to_string());
             let launch = launcher.dry_run(&dispatch);
 
             task.status = TaskStatus::Queued;

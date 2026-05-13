@@ -1,5 +1,6 @@
 use crate::adapter::RuntimeAdapter;
 use crate::domain::AgentRuntime;
+use crate::paths::HELM_AGENT_HOME_ENV;
 use anyhow::{bail, Context, Result};
 use std::env;
 use std::path::PathBuf;
@@ -30,6 +31,7 @@ pub enum TmuxSessionState {
 pub struct Launcher {
     tmux_bin: PathBuf,
     runtime_commands: RuntimeCommandOverrides,
+    helm_agent_home: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -49,6 +51,8 @@ impl Launcher {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("tmux")),
             runtime_commands: RuntimeCommandOverrides::from_env(),
+            helm_agent_home: env::var_os(HELM_AGENT_HOME_ENV)
+                .map(|home| home.to_string_lossy().to_string()),
         }
     }
 
@@ -56,6 +60,7 @@ impl Launcher {
         Self {
             tmux_bin,
             runtime_commands: RuntimeCommandOverrides::default(),
+            helm_agent_home: None,
         }
     }
 
@@ -69,7 +74,21 @@ impl Launcher {
         Self {
             tmux_bin,
             runtime_commands,
+            helm_agent_home: None,
         }
+    }
+
+    pub fn with_tmux_bin_and_helm_agent_home(tmux_bin: PathBuf, helm_agent_home: String) -> Self {
+        Self {
+            tmux_bin,
+            runtime_commands: RuntimeCommandOverrides::default(),
+            helm_agent_home: Some(helm_agent_home),
+        }
+    }
+
+    pub fn with_helm_agent_home(mut self, helm_agent_home: String) -> Self {
+        self.helm_agent_home = Some(helm_agent_home);
+        self
     }
 
     pub fn dry_run(&self, dispatch: &DispatchPlan) -> LaunchPreview {
@@ -84,9 +103,20 @@ impl Launcher {
             .runtime_resume_command(&adapter)
             .map(ToString::to_string);
 
+        let env_args = self
+            .helm_agent_home
+            .as_ref()
+            .map(|home| {
+                format!(
+                    " -e {}",
+                    shell_quote(&format!("{HELM_AGENT_HOME_ENV}={home}"))
+                )
+            })
+            .unwrap_or_default();
+
         LaunchPreview {
             start_command: format!(
-                "tmux new-session -d -s {tmux_session} -c {cwd} {command}",
+                "tmux new-session -d{env_args} -s {tmux_session} -c {cwd} {command}",
                 tmux_session = shell_quote(&tmux_session),
                 cwd = shell_quote(&dispatch.cwd.display().to_string()),
                 command = shell_quote(runtime_command)
@@ -101,9 +131,14 @@ impl Launcher {
         let preview = self.dry_run(dispatch);
         let adapter = RuntimeAdapter::for_runtime(dispatch.runtime);
         let runtime_command = self.runtime_command(&adapter);
-        let output = Command::new(&self.tmux_bin)
-            .arg("new-session")
-            .arg("-d")
+        let mut command = Command::new(&self.tmux_bin);
+        command.arg("new-session").arg("-d");
+        if let Some(home) = &self.helm_agent_home {
+            command
+                .arg("-e")
+                .arg(format!("{HELM_AGENT_HOME_ENV}={home}"));
+        }
+        let output = command
             .arg("-s")
             .arg(&preview.tmux_session)
             .arg("-c")
@@ -150,7 +185,7 @@ impl Launcher {
         let output = Command::new(&self.tmux_bin)
             .arg("send-keys")
             .arg("-t")
-            .arg(format!("={session}"))
+            .arg(format!("={session}:"))
             .arg(message)
             .arg("Enter")
             .output()

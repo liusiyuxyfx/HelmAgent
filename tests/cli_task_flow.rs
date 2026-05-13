@@ -27,6 +27,24 @@ fn helm_agent_with_home(home: &std::path::Path) -> Command {
     cmd
 }
 
+fn shell_quote_for_test(value: &str) -> String {
+    if value.is_empty() {
+        return "''".to_string();
+    }
+    if value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '/' | '.' | '_' | '-' | '=' | ':'))
+    {
+        value.to_string()
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+fn helm_agent_home_arg_for_test(home: &std::path::Path) -> String {
+    format!("HELM_AGENT_HOME={}", home.canonicalize().unwrap().display())
+}
+
 fn fake_tmux_script(path: &Path, record_path: &Path) {
     let record_path = record_path.display().to_string().replace('\'', "'\\''");
     fs::write(
@@ -1419,6 +1437,7 @@ fn review_accept_and_request_changes_update_status() {
 #[test]
 fn dry_run_dispatch_records_recovery_commands() {
     let home = tempdir().unwrap();
+    let env_arg = helm_agent_home_arg_for_test(home.path());
 
     helm_agent_with_home(home.path())
         .args([
@@ -1446,9 +1465,10 @@ fn dry_run_dispatch_records_recovery_commands() {
         .assert()
         .success()
         .stdout(contains("Dry-run dispatch PM-20260509-004"))
-        .stdout(contains(
-            "Start: tmux new-session -d -s helm-agent-PM-20260509-004-codex -c /repo/project codex",
-        ))
+        .stdout(contains(format!(
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260509-004-codex -c /repo/project codex",
+            shell_quote_for_test(&env_arg)
+        )))
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-004-codex",
         ))
@@ -1482,7 +1502,10 @@ fn dry_run_dispatch_records_recovery_commands() {
     assert_eq!(event.event_type, "dispatch_planned");
     assert_eq!(
         event.message,
-        "tmux new-session -d -s helm-agent-PM-20260509-004-codex -c /repo/project codex"
+        format!(
+            "tmux new-session -d -e {} -s helm-agent-PM-20260509-004-codex -c /repo/project codex",
+            shell_quote_for_test(&env_arg)
+        )
     );
 
     helm_agent_with_home(home.path())
@@ -1608,6 +1631,7 @@ fn task_brief_write_records_path_and_file() {
 #[test]
 fn dry_run_dispatch_omits_unavailable_native_resume_command() {
     let home = tempdir().unwrap();
+    let env_arg = helm_agent_home_arg_for_test(home.path());
 
     helm_agent_with_home(home.path())
         .args([
@@ -1635,9 +1659,10 @@ fn dry_run_dispatch_omits_unavailable_native_resume_command() {
         .assert()
         .success()
         .stdout(contains("Dry-run dispatch PM-20260509-005"))
-        .stdout(contains(
-            "Start: tmux new-session -d -s helm-agent-PM-20260509-005-opencode -c /repo/project opencode",
-        ))
+        .stdout(contains(format!(
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260509-005-opencode -c /repo/project opencode",
+            shell_quote_for_test(&env_arg)
+        )))
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-005-opencode",
         ))
@@ -1670,6 +1695,7 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
     let tmux_bin = temp.path().join("fake-tmux");
     let record_path = temp.path().join("tmux-args.txt");
     fake_tmux_script(&tmux_bin, &record_path);
+    let env_arg = helm_agent_home_arg_for_test(home.path());
 
     helm_agent_with_home(home.path())
         .args([
@@ -1697,9 +1723,10 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
         .assert()
         .success()
         .stdout(contains("Started PM-20260509-006"))
-        .stdout(contains(
-            "Start: tmux new-session -d -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude",
-        ))
+        .stdout(contains(format!(
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude",
+            shell_quote_for_test(&env_arg)
+        )))
         .stdout(contains(
             "Attach: tmux attach -t helm-agent-PM-20260509-006-claude",
         ))
@@ -1707,7 +1734,9 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
-        "new-session\n-d\n-s\nhelm-agent-PM-20260509-006-claude\n-c\n/repo/my project\nclaude\n"
+        format!(
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260509-006-claude\n-c\n/repo/my project\nclaude\n"
+        )
     );
 
     let store = TaskStore::new(home.path().to_path_buf());
@@ -1728,7 +1757,10 @@ fn non_dry_run_dispatch_invokes_tmux_and_records_running_state() {
     assert_eq!(event.event_type, "dispatch_started");
     assert_eq!(
         event.message,
-        "tmux new-session -d -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude"
+        format!(
+            "tmux new-session -d -e {} -s helm-agent-PM-20260509-006-claude -c '/repo/my project' claude",
+            shell_quote_for_test(&env_arg)
+        )
     );
     assert_eq!(
         events
@@ -1759,6 +1791,7 @@ fn dispatch_respects_runtime_command_env_override() {
     let tmux_bin = temp.path().join("fake-tmux");
     let record_path = temp.path().join("tmux-args.txt");
     fake_tmux_script(&tmux_bin, &record_path);
+    let env_arg = helm_agent_home_arg_for_test(home.path());
 
     helm_agent_with_home(home.path())
         .args([
@@ -1785,14 +1818,17 @@ fn dispatch_respects_runtime_command_env_override() {
         .assert()
         .success()
         .stdout(contains("Started PM-20260512-CMD"))
-        .stdout(contains(
-            "Start: tmux new-session -d -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'",
-        ))
+        .stdout(contains(format!(
+            "Start: tmux new-session -d -e {} -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'",
+            shell_quote_for_test(&env_arg)
+        )))
         .stdout(contains("Resume: mc --code --resume <session-id>"));
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
-        "new-session\n-d\n-s\nhelm-agent-PM-20260512-CMD-claude\n-c\n/repo/project\nmc --code\n"
+        format!(
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260512-CMD-claude\n-c\n/repo/project\nmc --code\n"
+        )
     );
 
     let store = TaskStore::new(home.path().to_path_buf());
@@ -1807,7 +1843,10 @@ fn dispatch_respects_runtime_command_env_override() {
         event.event_type == "dispatch_started"
             && event
                 .message
-                .contains("tmux new-session -d -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'")
+                .contains(&format!(
+                    "tmux new-session -d -e {} -s helm-agent-PM-20260512-CMD-claude -c /repo/project 'mc --code'",
+                    shell_quote_for_test(&env_arg)
+                ))
     }));
 }
 
@@ -2011,6 +2050,7 @@ fn send_brief_real_dispatch_sends_brief_path_and_records_event() {
     let tmux_bin = temp.path().join("fake-tmux");
     let record_path = temp.path().join("tmux-args.txt");
     fake_tmux_append_script(&tmux_bin, &record_path, false);
+    let env_arg = helm_agent_home_arg_for_test(home.path());
 
     helm_agent_with_home(home.path())
         .args([
@@ -2043,8 +2083,10 @@ fn send_brief_real_dispatch_sends_brief_path_and_records_event() {
         .stdout(contains("Brief sent: yes"));
 
     let record = fs::read_to_string(&record_path).unwrap();
-    assert!(record.contains("CALL\nnew-session\n-d\n-s\nhelm-agent-PM-20260511-SEND-claude"));
-    assert!(record.contains("CALL\nsend-keys\n-t\n=helm-agent-PM-20260511-SEND-claude"));
+    assert!(record.contains(&format!(
+        "CALL\nnew-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260511-SEND-claude"
+    )));
+    assert!(record.contains("CALL\nsend-keys\n-t\n=helm-agent-PM-20260511-SEND-claude:"));
     assert!(record.contains("Use this HelmAgent child-agent brief before starting work:"));
     assert!(record.contains("sessions/PM-20260511-SEND/brief.md"));
     assert!(record.ends_with("Enter\n"), "{record}");
@@ -2477,6 +2519,7 @@ fn codex_dispatch_requires_confirmation_before_tmux_launch() {
     let tmux_bin = temp.path().join("fake-tmux");
     let record_path = temp.path().join("tmux-args.txt");
     fake_tmux_script(&tmux_bin, &record_path);
+    let env_arg = helm_agent_home_arg_for_test(home.path());
 
     helm_agent_with_home(home.path())
         .args([
@@ -2523,7 +2566,9 @@ fn codex_dispatch_requires_confirmation_before_tmux_launch() {
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
-        "new-session\n-d\n-s\nhelm-agent-PM-20260509-007-codex\n-c\n/repo/project\ncodex\n"
+        format!(
+            "new-session\n-d\n-e\n{env_arg}\n-s\nhelm-agent-PM-20260509-007-codex\n-c\n/repo/project\ncodex\n"
+        )
     );
 }
 

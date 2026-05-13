@@ -290,6 +290,33 @@ fn launch_passes_runtime_command_override_to_tmux() {
 }
 
 #[test]
+fn launch_injects_helm_agent_home_into_tmux_environment() {
+    let temp = tempdir().unwrap();
+    let tmux_bin = temp.path().join("fake-tmux");
+    let record_path = temp.path().join("tmux-args.txt");
+    fake_tmux_script(&tmux_bin, &record_path);
+
+    let dispatch = DispatchPlan {
+        task_id: "PM-20260513-HOME".to_string(),
+        runtime: AgentRuntime::Claude,
+        cwd: PathBuf::from("/repo/project"),
+    };
+    let launcher =
+        Launcher::with_tmux_bin_and_helm_agent_home(tmux_bin, "/tmp/helm-agent home".to_string());
+
+    let launch = launcher.launch(&dispatch).unwrap();
+
+    assert_eq!(
+        launch.start_command,
+        "tmux new-session -d -e 'HELM_AGENT_HOME=/tmp/helm-agent home' -s helm-agent-PM-20260513-HOME-claude -c /repo/project claude"
+    );
+    assert_eq!(
+        fs::read_to_string(record_path).unwrap(),
+        "new-session\n-d\n-e\nHELM_AGENT_HOME=/tmp/helm-agent home\n-s\nhelm-agent-PM-20260513-HOME-claude\n-c\n/repo/project\nclaude\n"
+    );
+}
+
+#[test]
 fn launch_error_includes_tmux_output_and_session_name() {
     let temp = tempdir().unwrap();
     let tmux_bin = temp.path().join("failing-tmux");
@@ -325,7 +352,7 @@ fn send_keys_invokes_tmux_with_literal_message_and_enter() {
 
     assert_eq!(
         fs::read_to_string(record_path).unwrap(),
-        "send-keys\n-t\n=helm-agent-PM-20260511-SEND-claude\nUse brief\n/path/to/brief.md\nEnter\n"
+        "send-keys\n-t\n=helm-agent-PM-20260511-SEND-claude:\nUse brief\n/path/to/brief.md\nEnter\n"
     );
 }
 
