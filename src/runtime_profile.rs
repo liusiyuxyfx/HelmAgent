@@ -53,6 +53,13 @@ impl RuntimeProfile {
         }
         Ok(())
     }
+
+    pub fn clear(&mut self, runtime: AgentRuntime) -> Result<bool> {
+        if runtime == AgentRuntime::Acp {
+            bail!("runtime profile does not apply to ACP agents");
+        }
+        Ok(self.runtimes.remove(runtime.as_str()).is_some())
+    }
 }
 
 pub fn runtime_profile_path(store: &TaskStore) -> PathBuf {
@@ -81,6 +88,17 @@ pub fn save_runtime_profile(store: &TaskStore, profile: &RuntimeProfile) -> Resu
     let yaml = serde_yaml::to_string(profile).context("serialize runtime profile")?;
     fs::write(&path, yaml).with_context(|| format!("write runtime profile {}", path.display()))?;
     Ok(path)
+}
+
+pub fn remove_runtime_profile(store: &TaskStore) -> Result<PathBuf> {
+    let path = runtime_profile_path(store);
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(error) => {
+            Err(error).with_context(|| format!("remove runtime profile {}", path.display()))
+        }
+    }
 }
 
 fn normalize_profile_value(value: Option<String>) -> Option<String> {

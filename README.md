@@ -278,6 +278,12 @@ helm-agent runtime profile doctor
 helm-agent runtime doctor
 ```
 
+Clear one runtime override when switching workflows:
+
+```bash
+helm-agent runtime profile clear claude
+```
+
 Environment variables still work as one-shot dispatch overrides and take precedence
 over the profile. Runtime commands are passed to tmux as trusted shell command
 strings; use a wrapper script if the command path needs complex quoting. Set
@@ -312,6 +318,7 @@ git diff --check
 - [Install Guide](docs/install.md)
 - [Real Run Quickstart](docs/quickstart-real-run.md)
 - [Main-Agent Integration](docs/agent-integrations/main-agent.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

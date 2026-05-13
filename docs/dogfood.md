@@ -9,6 +9,10 @@ isolated `HELM_AGENT_HOME`, so it does not modify your normal task board.
 make dogfood-dry-run
 ```
 
+The target leaves the generated temp state in place so the printed review
+commands can be run after the target exits. Remove those paths with the printed
+cleanup command when the inspection is done.
+
 The target runs the same coordinator loop a main agent should follow:
 
 ```bash

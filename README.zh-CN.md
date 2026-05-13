@@ -261,6 +261,12 @@ helm-agent runtime profile doctor
 helm-agent runtime doctor
 ```
 
+切换工作流时，可以清理某个 runtime 的本地持久化覆盖：
+
+```bash
+helm-agent runtime profile clear claude
+```
+
 环境变量仍可作为一次性分发覆盖，并且优先级高于 profile。运行时命令会作为可信 shell 命令字符串传给 tmux；如果命令路径需要复杂引号，建议使用 wrapper script。仅当你的 OpenCode 版本支持原生 resume 时，再设置 `HELM_AGENT_OPENCODE_RESUME_COMMAND`。
 
 ## 开发
@@ -291,6 +297,7 @@ git diff --check
 - [安装指南](docs/install.md)
 - [真实试运行快速开始](docs/quickstart-real-run.md)
 - [主 Agent 集成](docs/agent-integrations/main-agent.md)
+- [更新日志](CHANGELOG.md)
 
 ## 许可证
 

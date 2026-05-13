@@ -205,6 +205,7 @@ helm-agent task triage PM-20260509-101 --risk medium --priority high --runtime c
 helm-agent task dispatch --dry-run --runtime claude PM-20260509-101
 helm-agent task sync --all
 helm-agent task mark PM-20260509-101 --ready-for-review --message "Implementation and tests are ready"
+# Human or explicitly authorized main agent only:
 helm-agent task review PM-20260509-101 --accept
 ```
 

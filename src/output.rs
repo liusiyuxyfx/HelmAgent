@@ -31,15 +31,22 @@ pub fn task_status(task: &TaskRecord, events: &[TaskEvent]) -> String {
         .as_deref()
         .map(|command| format!("Resume: {command}\n"))
         .unwrap_or_default();
+    let acp_session = task
+        .assignment
+        .acp_session_id
+        .as_deref()
+        .map(|session| format!("ACP Session: {session}\n"))
+        .unwrap_or_default();
 
     format!(
-        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n{attach}{resume}{brief}{review}",
+        "{id} [{status}]\nTitle: {title}\nProject: {project}\nProgress: {progress}\nNext: {next}\n{acp_session}{attach}{resume}{brief}{review}",
         id = task.id,
         status = task.status.as_str(),
         title = task.title,
         project = task.project.path.display(),
         progress = last_event,
         next = task.progress.next_action,
+        acp_session = acp_session,
         attach = attach,
         resume = resume,
         brief = brief,

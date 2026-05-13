@@ -1,4 +1,4 @@
-use helm_agent::domain::{AgentRuntime, TaskRecord, TaskStatus};
+use helm_agent::domain::{AgentRuntime, TaskEvent, TaskRecord, TaskStatus};
 use helm_agent::store::TaskStore;
 use helm_agent::task_actions::{self, MarkAction, ReviewAction};
 use helm_agent::web_board;
@@ -53,15 +53,20 @@ fn interactive_board_html_contains_action_token_and_app_controls() {
     assert!(html.contains("mutate('/sync'"), "{html}");
     assert!(html.contains("detail-runtime"), "{html}");
     assert!(html.contains("detail-review"), "{html}");
+    assert!(html.contains("detail-session"), "{html}");
     assert!(html.contains("detail-brief"), "{html}");
     assert!(html.contains("detail-resume"), "{html}");
+    assert!(html.contains("detail-attach"), "{html}");
     assert!(html.contains("Copy Brief"), "{html}");
     assert!(html.contains("Copy Resume"), "{html}");
+    assert!(html.contains("Copy Attach"), "{html}");
     assert!(html.contains("copyDetailText('detail-brief'"), "{html}");
     assert!(html.contains("copyDetailText('detail-resume'"), "{html}");
+    assert!(html.contains("copyDetailText('detail-attach'"), "{html}");
     assert!(html.contains("navigator.clipboard.writeText"), "{html}");
     assert!(html.contains("eventsEl.replaceChildren();"), "{html}");
     assert!(html.contains("if (id !== selectedId) return;"), "{html}");
+    assert!(html.contains("event.created_at"), "{html}");
 }
 
 #[test]
@@ -203,6 +208,68 @@ fn api_tasks_returns_active_tasks_as_json() {
     assert!(response.contains(r#""ok":true"#), "{response}");
     assert!(response.contains("PM-20260511-031"), "{response}");
     assert!(!response.contains("PM-20260511-032"), "{response}");
+}
+
+#[test]
+fn api_tasks_and_events_feed_detail_panel_data() {
+    let home = tempdir().unwrap();
+    let store = TaskStore::new(home.path().to_path_buf());
+    let mut record = task("PM-20260513-DETAIL", "Detail data");
+    record.assignment.runtime = Some(AgentRuntime::Acp);
+    record.assignment.tmux_session = Some("tmux-fallback".to_string());
+    record.assignment.native_session_id = Some("native-fallback".to_string());
+    record.assignment.acp_session_id = Some("acp-session-42".to_string());
+    record.recovery.attach_command = Some("tmux attach -t helm-agent-PM-DETAIL".to_string());
+    record.recovery.resume_command = Some("claude --resume acp-session-42".to_string());
+    record.recovery.brief_path = Some(home.path().join("sessions/PM-20260513-DETAIL/brief.md"));
+    store.save_task(&record).unwrap();
+    store
+        .append_event(&TaskEvent::new(
+            "PM-20260513-DETAIL".to_string(),
+            "ready_for_review",
+            "Ready for detail inspection".to_string(),
+            OffsetDateTime::UNIX_EPOCH + Duration::seconds(123),
+        ))
+        .unwrap();
+
+    let tasks_response = web_board::handle_board_http_request(
+        "GET /api/tasks HTTP/1.1\r\nHost: localhost:8765\r\n\r\n",
+        &store,
+        "token",
+    );
+    let (_, tasks_body) = tasks_response.split_once("\r\n\r\n").unwrap();
+    let tasks_payload: serde_json::Value = serde_json::from_str(tasks_body).unwrap();
+    let task = &tasks_payload["tasks"][0];
+    assert_eq!(task["assignment"]["runtime"], "acp");
+    assert_eq!(task["assignment"]["acp_session_id"], "acp-session-42");
+    assert_eq!(
+        task["recovery"]["attach_command"],
+        "tmux attach -t helm-agent-PM-DETAIL"
+    );
+    assert_eq!(
+        task["recovery"]["resume_command"],
+        "claude --resume acp-session-42"
+    );
+    assert!(
+        task["recovery"]["brief_path"]
+            .as_str()
+            .unwrap()
+            .ends_with("sessions/PM-20260513-DETAIL/brief.md"),
+        "{task}"
+    );
+
+    let events_response = web_board::handle_board_http_request(
+        "GET /api/tasks/PM-20260513-DETAIL/events HTTP/1.1\r\nHost: localhost:8765\r\n\r\n",
+        &store,
+        "token",
+    );
+    let (_, events_body) = events_response.split_once("\r\n\r\n").unwrap();
+    let events_payload: serde_json::Value = serde_json::from_str(events_body).unwrap();
+    let event = &events_payload["events"][0];
+    assert_eq!(event["event_type"], "ready_for_review");
+    assert_eq!(event["message"], "Ready for detail inspection");
+    assert!(event.get("created_at").is_some(), "{event}");
+    assert!(!event["created_at"].is_null(), "{event}");
 }
 
 #[test]

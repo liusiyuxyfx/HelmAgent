@@ -943,6 +943,7 @@ fn acp_real_dispatch_sends_brief_to_fake_agent_and_records_session() {
         .success()
         .stdout(contains("Completed ACP PM-20260511-ACP-REAL"))
         .stdout(contains("Session: fake-acp-session-1"))
+        .stdout(contains("Stop: EndTurn"))
         .stdout(contains("Brief: "));
 
     let store = TaskStore::new(home.path().to_path_buf());
@@ -970,6 +971,17 @@ fn acp_real_dispatch_sends_brief_to_fake_agent_and_records_session() {
     assert!(events
         .iter()
         .any(|event| event.event_type == "acp_dispatch_completed"));
+    assert!(events.iter().any(|event| {
+        event.event_type == "acp_dispatch_completed"
+            && event.message.contains("session fake-acp-session-1")
+            && event.message.contains("stop EndTurn")
+    }));
+
+    helm_agent_with_home(home.path())
+        .args(["task", "status", "PM-20260511-ACP-REAL"])
+        .assert()
+        .success()
+        .stdout(contains("ACP Session: fake-acp-session-1"));
 }
 
 #[test]
@@ -2312,6 +2324,89 @@ fn runtime_profile_set_rejects_empty_override_values() {
         .stderr(contains(
             "runtime profile set requires a non-empty command or resume value",
         ));
+
+    assert!(!home.path().join("runtime/profile.yaml").exists());
+}
+
+#[test]
+fn runtime_profile_clear_removes_one_runtime_override() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "runtime",
+            "profile",
+            "set",
+            "claude",
+            "--command",
+            "claude-wrapper",
+            "--resume",
+            "claude-wrapper --resume <session-id>",
+        ])
+        .assert()
+        .success();
+    helm_agent_with_home(home.path())
+        .args([
+            "runtime",
+            "profile",
+            "set",
+            "codex",
+            "--command",
+            "codex-wrapper",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "profile", "clear", "claude"])
+        .assert()
+        .success()
+        .stdout(contains("Cleared runtime profile claude"));
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "doctor"])
+        .assert()
+        .success()
+        .stdout(contains("claude command: claude (default)"))
+        .stdout(contains("codex command: codex-wrapper (profile)"));
+}
+
+#[test]
+fn runtime_profile_clear_noop_does_not_create_profile_file() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "profile", "clear", "claude"])
+        .assert()
+        .success()
+        .stdout(contains("Runtime profile claude was already clear"))
+        .stdout(contains("Runtime profile unchanged"));
+
+    assert!(!home.path().join("runtime/profile.yaml").exists());
+}
+
+#[test]
+fn runtime_profile_clear_last_override_removes_profile_file() {
+    let home = tempdir().unwrap();
+
+    helm_agent_with_home(home.path())
+        .args([
+            "runtime",
+            "profile",
+            "set",
+            "claude",
+            "--command",
+            "claude-wrapper",
+        ])
+        .assert()
+        .success();
+
+    helm_agent_with_home(home.path())
+        .args(["runtime", "profile", "clear", "claude"])
+        .assert()
+        .success()
+        .stdout(contains("Cleared runtime profile claude"))
+        .stdout(contains("Removed runtime profile"));
 
     assert!(!home.path().join("runtime/profile.yaml").exists());
 }
@@ -4274,6 +4369,29 @@ fn docs_cover_send_brief_as_opt_in_real_dispatch() {
 }
 
 #[test]
+fn release_docs_cover_v0_1_0_and_changelog() {
+    let changelog = fs::read_to_string("CHANGELOG.md").expect("CHANGELOG.md exists");
+    let readme = fs::read_to_string("README.md").unwrap();
+    let zh = fs::read_to_string("README.zh-CN.md").unwrap();
+
+    for required in [
+        "# Changelog",
+        "## v0.1.0",
+        "helm-agent-coordinator",
+        "helm-agent board serve",
+        "helm-agent acp preset install claude-code",
+        "helm-agent doctor",
+    ] {
+        assert!(
+            changelog.contains(required),
+            "missing `{required}` from CHANGELOG.md"
+        );
+    }
+    assert!(readme.contains("CHANGELOG.md"), "{readme}");
+    assert!(zh.contains("CHANGELOG.md"), "{zh}");
+}
+
+#[test]
 fn send_brief_docs_keep_ids_consistent_per_document() {
     let readme = fs::read_to_string("README.md").unwrap();
     let skill =
@@ -4330,11 +4448,23 @@ fn dogfood_runbook_and_make_target_cover_dry_run_loop() {
         "cargo run --quiet --bin helm-agent -- task dispatch --dry-run --runtime claude PM-20260512-DOGFOOD",
         "cargo run --quiet --bin helm-agent -- task sync --all",
         "cargo run --quiet --bin helm-agent -- task mark PM-20260512-DOGFOOD --ready-for-review",
-        "cargo run --quiet --bin helm-agent -- task review PM-20260512-DOGFOOD --accept",
+        "State kept for review:",
+        "Review commands:",
+        "cargo run --quiet --bin helm-agent -- task status PM-20260512-DOGFOOD",
+        "Cleanup command:",
     ] {
         assert!(
             makefile.contains(required),
             "missing `{required}` from Makefile"
         );
     }
+    assert!(
+        !makefile.contains("trap 'rm -rf"),
+        "dogfood target must keep state for printed review commands:\n{makefile}"
+    );
+    assert!(
+        !makefile.contains("\tcargo run --quiet --bin helm-agent -- task review PM-20260512-DOGFOOD --accept")
+            && !makefile.contains("; \\\n\tcargo run --quiet --bin helm-agent -- task review PM-20260512-DOGFOOD --accept"),
+        "dogfood target must not auto-accept review:\n{makefile}"
+    );
 }

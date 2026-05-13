@@ -189,8 +189,14 @@ struct RuntimeProfileCommand {
 
 #[derive(Debug, Subcommand)]
 enum RuntimeProfileSubcommand {
+    Clear(RuntimeProfileClearArgs),
     Doctor,
     Set(RuntimeProfileSetArgs),
+}
+
+#[derive(Debug, Args)]
+struct RuntimeProfileClearArgs {
+    runtime: RuntimeArg,
 }
 
 #[derive(Debug, Args)]
@@ -502,6 +508,25 @@ fn handle_runtime(runtime: RuntimeCommand, store: &TaskStore) -> Result<()> {
 
 fn handle_runtime_profile(profile: RuntimeProfileCommand, store: &TaskStore) -> Result<()> {
     match profile.command {
+        RuntimeProfileSubcommand::Clear(args) => {
+            let runtime = AgentRuntime::from(args.runtime);
+            let mut profile = runtime_profile::load_runtime_profile(store)?;
+            let removed = profile.clear(runtime)?;
+            if removed {
+                println!("Cleared runtime profile {}", runtime.as_str());
+                if profile.runtimes.is_empty() {
+                    let path = runtime_profile::remove_runtime_profile(store)?;
+                    println!("Removed runtime profile {}", path.display());
+                } else {
+                    let path = runtime_profile::save_runtime_profile(store, &profile)?;
+                    println!("Saved runtime profile {}", path.display());
+                }
+            } else {
+                println!("Runtime profile {} was already clear", runtime.as_str());
+                println!("Runtime profile unchanged");
+            }
+            Ok(())
+        }
         RuntimeProfileSubcommand::Doctor => print_runtime_doctor(store),
         RuntimeProfileSubcommand::Set(args) => {
             if args.command.is_none() && args.resume.is_none() {
@@ -1117,7 +1142,10 @@ fn handle_acp_task_dispatch(
             let completed_event = TaskEvent::new(
                 args.id.clone(),
                 "acp_dispatch_completed",
-                format!("{agent_name}: session {}", result.session_id),
+                format!(
+                    "{agent_name}: session {} stop {}",
+                    result.session_id, result.stop_reason
+                ),
                 now,
             );
             final_events.push(completed_event.clone());
@@ -1180,6 +1208,7 @@ fn handle_acp_task_dispatch(
             println!("Agent: {agent_name}");
             println!("Command: {command}");
             println!("Session: {}", result.session_id);
+            println!("Stop: {}", result.stop_reason);
             println!(
                 "Resume: {}",
                 completed_task

@@ -214,9 +214,14 @@ summary { cursor: pointer; color: var(--muted); }
     <div class="field"><label>Task</label><div id="detail-id">-</div></div>
     <div class="field"><label>Project</label><div id="detail-project">-</div></div>
     <div class="field"><label>Runtime</label><div id="detail-runtime">-</div></div>
+    <div class="field"><label>Session</label><div id="detail-session">-</div></div>
     <div class="field"><label>Review</label><div id="detail-review">-</div></div>
     <div class="field"><label>Last</label><div id="detail-last">-</div></div>
     <div class="field"><label>Next</label><div id="detail-next">-</div></div>
+    <div class="field">
+      <div class="field-heading"><label>Attach</label><button id="copy-attach-button" type="button">Copy Attach</button></div>
+      <div id="detail-attach">-</div>
+    </div>
     <div class="field">
       <div class="field-heading"><label>Brief</label><button id="copy-brief-button" type="button">Copy Brief</button></div>
       <div id="detail-brief">-</div>
@@ -380,15 +385,18 @@ function renderDetail() {
   const task = selectedTask();
   const eventsEl = document.getElementById('events');
   document.querySelectorAll('.actions button, .actions input').forEach(el => { el.disabled = !task; });
+  document.getElementById('copy-attach-button').disabled = !task || !task.recovery.attach_command;
   document.getElementById('copy-brief-button').disabled = !task || !task.recovery.brief_path;
   document.getElementById('copy-resume-button').disabled = !task || !task.recovery.resume_command;
   document.getElementById('detail-title').textContent = task ? task.title : 'Select a task';
   document.getElementById('detail-id').textContent = task ? task.id : '-';
   document.getElementById('detail-project').textContent = task ? task.project.path : '-';
   document.getElementById('detail-runtime').textContent = task ? text(task.assignment.runtime) : '-';
+  document.getElementById('detail-session').textContent = task ? text(task.assignment.acp_session_id || task.assignment.native_session_id || task.assignment.tmux_session) : '-';
   document.getElementById('detail-review').textContent = task ? text(task.review.state) : '-';
   document.getElementById('detail-last').textContent = task ? text(task.progress.last_event) : '-';
   document.getElementById('detail-next').textContent = task ? text(task.progress.next_action) : '-';
+  document.getElementById('detail-attach').textContent = task ? text(task.recovery.attach_command) : '-';
   document.getElementById('detail-brief').textContent = task ? text(task.recovery.brief_path) : '-';
   document.getElementById('detail-resume').textContent = task ? text(task.recovery.resume_command) : '-';
   if (task) {
@@ -406,7 +414,7 @@ async function loadEvents(id) {
     eventsEl.replaceChildren(...payload.events.slice(-30).reverse().map(event => {
       const row = document.createElement('div');
       row.className = 'event';
-      row.textContent = `${event.event_type}: ${event.message}`;
+      row.textContent = `${event.created_at} - ${event.event_type}: ${event.message}`;
       return row;
     }));
   } catch (error) {
@@ -461,6 +469,7 @@ async function copyDetailText(elementId) {
 }
 
 document.getElementById('refresh-button').addEventListener('click', loadTasks);
+document.getElementById('copy-attach-button').addEventListener('click', () => copyDetailText('detail-attach'));
 document.getElementById('copy-brief-button').addEventListener('click', () => copyDetailText('detail-brief'));
 document.getElementById('copy-resume-button').addEventListener('click', () => copyDetailText('detail-resume'));
 document.querySelectorAll('[data-status-filter]').forEach(button => {

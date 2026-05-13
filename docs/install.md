@@ -256,6 +256,12 @@ helm-agent runtime profile doctor
 helm-agent runtime doctor
 ```
 
+Clear a runtime profile override when switching local workflows:
+
+```bash
+helm-agent runtime profile clear claude
+```
+
 If no profile or environment override is configured, `--runtime claude` launches
 `claude`. Use the runtime profile for persistent local wrapper commands when your
 workspace needs one.
